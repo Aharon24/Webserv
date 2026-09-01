@@ -4,7 +4,6 @@
 void init_webserv(std::string &path)
 {
     webserv web(path);
-
     
 }
 
