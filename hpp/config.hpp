@@ -6,6 +6,7 @@
 class config
 {
 private:
+    std::string _path;
 
 public:
     config();
@@ -13,6 +14,8 @@ public:
     config(const config &ot);
     config(const std::string &path);
     ~config();
+
+    void set_path(const std::string &path);
 };
 
 
