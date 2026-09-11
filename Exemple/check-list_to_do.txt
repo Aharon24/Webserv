@@ -1,0 +1,198 @@
+WEBSERV — CONFIGURATION FILE TODO
+=================================
+
+[ ] SERVER BLOCK
+    [ ] server { ... }
+    [ ] Support multiple server blocks
+
+
+[ ] LISTEN
+    [ ] listen IP:PORT;
+    [ ] listen PORT;
+    [ ] Support multiple listen directives
+    [ ] Validate IP
+    [ ] Validate PORT
+
+
+[ ] ERROR PAGES
+    [ ] error_page 404 /errors/404.html;
+    [ ] error_page 403 /errors/403.html;
+    [ ] error_page 500 /errors/500.html;
+    [ ] Support custom error pages
+    [ ] Provide default error pages when none are configured
+
+
+[ ] CLIENT REQUEST BODY SIZE
+    [ ] client_max_body_size 10M;
+    [ ] Parse size value
+    [ ] Support size units
+    [ ] Check request body against limit
+    [ ] Return 413 when limit is exceeded
+
+
+[ ] LOCATION / ROUTE
+    [ ] location / { ... }
+    [ ] location /upload { ... }
+    [ ] location /images { ... }
+    [ ] Support multiple locations
+    [ ] No regex required
+    [ ] Match request URL to correct location
+
+
+[ ] ALLOWED HTTP METHODS
+    [ ] allowed_methods GET;
+    [ ] allowed_methods POST;
+    [ ] allowed_methods DELETE;
+    [ ] allowed_methods GET POST DELETE;
+    [ ] Return 405 when method is not allowed
+
+
+[ ] HTTP REDIRECTION
+    [ ] return 301 /new;
+    [ ] return 302 /new;
+    [ ] return 301 http://example.com;
+    [ ] Send Location header
+
+
+[ ] ROOT DIRECTORY
+    [ ] root /tmp/www;
+    [ ] Map URL to filesystem path
+    [ ] Example:
+        URL:  /kapouet/pouic/toto/pouet
+        ROOT: /tmp/www
+        FILE: /tmp/www/pouic/toto/pouet
+
+
+[ ] DIRECTORY LISTING
+    [ ] autoindex on;
+    [ ] autoindex off;
+    [ ] Show directory contents when enabled
+    [ ] Do not show directory contents when disabled
+
+
+[ ] DEFAULT DIRECTORY FILE
+    [ ] index index.html;
+    [ ] index home.html;
+    [ ] When URL points to directory, search for index file
+    [ ] If index file does not exist, use autoindex or return error
+
+
+[ ] FILE UPLOAD
+    [ ] upload on;
+    [ ] upload off;
+    [ ] upload_path /tmp/uploads;
+    [ ] Allow client to upload files
+    [ ] Save uploaded files to configured directory
+
+
+[ ] CGI
+    [ ] cgi .py /usr/bin/python3;
+    [ ] cgi .php /usr/bin/php-cgi;
+    [ ] Detect CGI by file extension
+    [ ] Support at least one CGI type
+    [ ] fork() only for CGI
+    [ ] execve() CGI program
+
+
+[ ] CGI ENVIRONMENT
+    [ ] REQUEST_METHOD
+    [ ] QUERY_STRING
+    [ ] CONTENT_LENGTH
+    [ ] CONTENT_TYPE
+    [ ] SCRIPT_NAME
+    [ ] PATH_INFO
+    [ ] SERVER_NAME
+    [ ] SERVER_PORT
+    [ ] Other required CGI variables
+
+
+[ ] CGI REQUEST
+    [ ] Pass request information to CGI
+    [ ] Pass request arguments
+    [ ] Pass request body
+
+
+[ ] CHUNKED REQUEST → CGI
+    [ ] Detect chunked request
+    [ ] Un-chunk request body
+    [ ] Send un-chunked body to CGI
+    [ ] CGI receives EOF at end of body
+
+
+[ ] CGI OUTPUT
+    [ ] Read CGI output
+    [ ] Handle Content-Length when provided
+    [ ] Use EOF when Content-Length is not provided
+
+
+[ ] CGI WORKING DIRECTORY
+    [ ] Run CGI in correct directory
+    [ ] Relative file paths must work
+
+
+[ ] CONFIGURATION VALIDATION
+    [ ] Unknown directive → error
+    [ ] Missing semicolon → error
+    [ ] Missing { → error
+    [ ] Missing } → error
+    [ ] Invalid IP → error
+    [ ] Invalid PORT → error
+    [ ] Invalid HTTP method → error
+    [ ] Invalid status code → error
+    [ ] Invalid body size → error
+    [ ] Invalid CGI extension → error
+    [ ] Invalid directive value → error
+
+
+[ ] TOKENIZER
+    [ ] Read words
+    [ ] Read numbers
+    [ ] Read paths
+    [ ] Read IP addresses
+    [ ] Read symbols:
+        [ ] {
+        [ ] }
+        [ ] ;
+        [ ] :
+    [ ] Ignore spaces
+    [ ] Ignore tabs
+    [ ] Ignore newlines
+    [ ] Handle comments if implemented
+    [ ] Produce token list
+
+
+[ ] PARSER
+    [ ] Parse server block
+    [ ] Parse listen
+    [ ] Parse error_page
+    [ ] Parse client_max_body_size
+    [ ] Parse location
+    [ ] Parse allowed_methods
+    [ ] Parse return
+    [ ] Parse root
+    [ ] Parse autoindex
+    [ ] Parse index
+    [ ] Parse upload
+    [ ] Parse upload_path
+    [ ] Parse CGI
+    [ ] Detect syntax errors
+
+
+[ ] CONFIGURATION OBJECTS
+
+    ServerConfig
+    [ ] listen
+    [ ] error_pages
+    [ ] client_max_body_size
+    [ ] locations
+
+    LocationConfig
+    [ ] path
+    [ ] allowed_methods
+    [ ] redirect
+    [ ] root
+    [ ] autoindex
+    [ ] index
+    [ ] upload
+    [ ] upload_path
+    [ ] CGI settings
