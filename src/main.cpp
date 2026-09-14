@@ -4,8 +4,10 @@
 void init_webserv(std::string &path)
 {
     webserv web(path);
-    
+    Tokenizer Tok;
+
     web.take_path();
+    Tok.create_tokens(web.get_path());
 }
 
 int main(int argc, char *argv[])
@@ -16,5 +18,4 @@ int main(int argc, char *argv[])
     if(argc == 2)
         path = argv[1];
     init_webserv(path);
-    std::cout << "helo";
 }

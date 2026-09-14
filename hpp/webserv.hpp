@@ -6,6 +6,7 @@
 #include <fstream>
 #include <string>
 #include "config.hpp"
+#include "Tokenizer.hpp"
 #include <unistd.h>
 
 
@@ -24,6 +25,7 @@ public:
 
     void take_path();
     void check_path(std::string &path);
+    std::string get_path();
 
 
 };

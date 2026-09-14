@@ -16,6 +16,7 @@ public:
     ~config();
 
     void set_path(const std::string &path);
+    std::string get_path();
 };
 
 

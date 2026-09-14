@@ -44,6 +44,10 @@ void webserv::take_path()
     this->check_path(this->_config_path);
 }
 
+std::string webserv::get_path()
+{
+    return(this->_config_path);
+}
 
 
 webserv::~webserv()

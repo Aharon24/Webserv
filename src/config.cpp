@@ -28,6 +28,11 @@ void config::set_path(const std::string &path)
     this->_path = path;
 }
 
+std::string config::get_path()
+{
+    return (this->_path);
+}
+
 config::~config()
 {
 
