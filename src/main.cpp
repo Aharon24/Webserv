@@ -7,7 +7,8 @@ void init_webserv(std::string &path)
     Tokenizer Tok;
 
     web.take_path();
-    Tok.create_tokens(web.get_path());
+    Tok.open_file_empty_and_valid(web.get_path());
+    Tok.create_tokens();
 }
 
 int main(int argc, char *argv[])

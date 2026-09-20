@@ -4,13 +4,29 @@
 
 #include <string>
 #include <vector>
+#include <fstream>
 #include <iostream>
 
 enum TokenType
 {
-    TOKEN_WORD,
-    TOKEN_LBRACE,
-    TOKEN_RBRACE
+    // 1. Բլոկների բանալի բառեր (Block Keywords)
+    TOKEN_SERVER,       // "server"
+    TOKEN_LOCATION,     // "location"
+
+    // 2. Դիրեկտիվաներ (Directives)
+    TOKEN_DIRECTIVE,    // "listen", "root", "index", "server_name", "error_page", "client_max_body_size" և այլն
+
+    // 3. Արժեքներ (Values / Arguments)
+    TOKEN_ARGUMENT,     // "8080", "localhost", "/var/www/html", "GET", "POST"
+
+    // 4. Սիմվոլներ (Special Characters)
+    TOKEN_LBRACE,       // '{'
+    TOKEN_RBRACE,       // '}'
+    TOKEN_SEMICOLON,    // ';'
+
+    // 5. Ծառայողական
+    TOKEN_EOF,          // Ֆայլի ավարտ
+    TOKEN_UNKNOWN       // Անհայտ սիմվոլ (սխալի համար)
 };
 
 struct Token
@@ -23,11 +39,16 @@ class Tokenizer
 {
 private:
     std::vector<Token> _tokens;
+    std::string file_path;
 public:
     Tokenizer();
+    Tokenizer(std::string path);
+    Tokenizer(const Tokenizer &ot);
+    Tokenizer &operator=(const Tokenizer &ot);
     ~Tokenizer();
 
-    void create_tokens(std::string path);
+    bool open_file_empty_and_valid(std::string path);
+    void create_tokens();
 };
 
 
