@@ -44,10 +44,10 @@ void Parser::print_tokens(void)
 }
 
 
- void Parser::start_parse(void)
- {
+void Parser::start_parse(void)
+{
     
- }
+}
 
 Parser::~Parser()
 {
