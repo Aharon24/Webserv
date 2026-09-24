@@ -31,8 +31,9 @@ Parser& Parser::operator=(const Parser &ot)
 }
 
 
-Parser::print_tokens(void)
+void Parser::print_tokens(void)
 {
+    std::cout << "------ in parse -> \n \n" ;
     for (size_t i = 0; i < this->_tokens.size(); ++i)
     {
         std::cout << "Index: " << i 
@@ -41,6 +42,12 @@ Parser::print_tokens(void)
                   << std::endl;
     }
 }
+
+
+ void Parser::start_parse(void)
+ {
+    
+ }
 
 Parser::~Parser()
 {

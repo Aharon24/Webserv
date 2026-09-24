@@ -13,6 +13,8 @@ void init_webserv(std::string &path)
     Tok.create_tokens();
     pars.set_token(Tok.get_token());
     pars.print_tokens();
+    pars.start_parse();
+    
 }
 
 int main(int argc, char *argv[])
