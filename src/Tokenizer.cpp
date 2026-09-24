@@ -166,6 +166,12 @@ void Tokenizer::add_separator_token(std::string &line, size_t &i)
     i++;
 }
 
+
+std::vector<Token>  Tokenizer::get_token(void)
+{
+    return (this->_tokens);
+}
+
 void Tokenizer::str_to_token(std::string line)
 {
     size_t i = 0;

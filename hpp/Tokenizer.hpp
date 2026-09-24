@@ -60,7 +60,7 @@ public:
     void print_tokens(void);
     std::string token_type_to_string(TokenType type) const;
     void add_separator_token(std::string &line, size_t &i);
-
+    std::vector<Token>  get_token(void);
 };
 
 
