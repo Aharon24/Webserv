@@ -12,7 +12,7 @@ void init_webserv(std::string &path)
     Tok.open_file_empty_and_valid(web.get_path());
     Tok.create_tokens();
     pars.set_token(Tok.get_token());
-    pars.print_tokens();
+    // pars.print_tokens();
     pars.start_parse();
 
 }

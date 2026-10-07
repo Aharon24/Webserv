@@ -44,9 +44,41 @@ void Parser::print_tokens(void)
 }
 
 
-void Parser::start_parse(void)
+void Parser::start_parse()
 {
-    
+    _index = 0;
+
+    if (_tokens[_index].type != TOKEN_SERVER)
+        throw std::runtime_error("Expected server");
+
+    parse_server();
+}
+
+void Parser::parse_server(void)
+{
+    // server
+    if (_tokens[_index].type != TOKEN_SERVER)
+        throw std::runtime_error("Expected server");
+
+    ++_index;
+
+    // {
+    if (_tokens[_index].type != TOKEN_LBRACE)
+        throw std::runtime_error("Expected '{'");
+
+    ++_index;
+
+    // directives inside server
+    while (_tokens[_index].type != TOKEN_RBRACE)
+    {
+        if (_tokens[_index].type == TOKEN_LISTEN)
+            parse_listen();
+        else
+            throw std::runtime_error("Unknown directive inside server");
+    }
+
+    // }
+    ++_index;
 }
 
 Parser::~Parser()

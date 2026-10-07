@@ -7,29 +7,38 @@
 #include "Config.hpp"
 
 
-struct cong_file
-{
-    int port;
-    std::string ip;
-    std::string TOKEN_SERVER;      
-    std::string TOKEN_LISTEN;  
-    std::string TOKEN_LOCATION;              
-    std::string TOKEN_ROOT;                
-    std::string TOKEN_INDEX;                  
-    std::string TOKEN_ERROR_PAGE;            
-    std::string TOKEN_CLIENT_MAX_BODY_SIZE;   
-    std::string TOKEN_ALLOWED_METHODS;   
-    std::string TOKEN_AUTOINDEX;        
-    std::string TOKEN_RETURN;              
-    std::string TOKEN_UPLOAD;                 
-    std::string TOKEN_UPLOAD_PATH;          
-    std::string TOKEN_CGI;            
-    std::string TOKEN_DIRECTIVE;              
-    std::string TOKEN_ARGUMENT;              
-    std::string TOKEN_LBRACE;               
-    std::string TOKEN_RBRACE;                 
-    std::string TOKEN_SEMICOLON;              
-};
+// struct ServerConfig
+// {
+//     std::vector<std::string> listen;
+
+//     std::map<int, std::string> error_pages;
+
+//     size_t client_max_body_size;
+
+//     std::vector<LocationConfig> locations;
+// };
+
+// struct LocationConfig
+// {
+//     std::string path;
+
+//     std::vector<std::string> allowed_methods;
+
+//     int         return_code;
+//     std::string return_path;
+
+//     std::string root;
+
+//     bool        autoindex;
+
+//     std::string index;
+
+//     bool        upload;
+//     std::string upload_store;
+
+//     std::string cgi_extension;
+//     std::string cgi_path;
+// };
 
 
 
@@ -38,7 +47,7 @@ class Parser
 private:
     std::vector<Token> _tokens;
     size_t _index;
-    cong_file setings_cong;
+    // cong_file setings_cong;
 public:
     Parser();
     Parser(const std::vector<Token>& _tokens);
@@ -49,6 +58,7 @@ public:
     ~Parser();
 
     void set_token(const std::vector<Token>& _tokens);
+    void parse_server(void);
 };
 
 #endif
