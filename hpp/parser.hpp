@@ -58,7 +58,11 @@ public:
     ~Parser();
 
     void set_token(const std::vector<Token>& _tokens);
+
     void parse_server(void);
+    void parse_listen(void);
+    void parse_root(void);
+    void parse_index(void);
 };
 
 #endif

@@ -13,7 +13,16 @@ void init_webserv(std::string &path)
     Tok.create_tokens();
     pars.set_token(Tok.get_token());
     // pars.print_tokens();
-    pars.start_parse();
+    
+    try
+    {
+        pars.start_parse();
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Config error: " << e.what() << std::endl;
+        return ;
+    }
 
 }
 
