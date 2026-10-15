@@ -7,6 +7,8 @@ void init_webserv(std::string &path)
     webserv web(path);
     Tokenizer Tok;
     Parser pars;
+    ServerConfig conf;
+
 
     web.take_path();
     Tok.open_file_empty_and_valid(web.get_path());
@@ -16,14 +18,14 @@ void init_webserv(std::string &path)
     
     try
     {
-        pars.start_parse();
+       conf =  pars.start_parse();
     }
     catch (const std::exception& e)
     {
         std::cerr << "Config error: " << e.what() << std::endl;
         return ;
     }
-
+    std::cout << conf.ip << "\n" << conf.port << "\ndone\n";
 }
 
 int main(int argc, char *argv[])
