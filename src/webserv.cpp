@@ -24,12 +24,19 @@ webserv& webserv::operator=(const webserv &ot)
 
 void webserv::check_path(std::string &path)
 {
-    if (access(path.c_str(), F_OK) == 0)
-    {
-        std::cout << "have file ok\n";
-    }
-    else
-        std::cout << "Error don't have a file you have a creat and give .conf file\n";
+    struct stat info;
+
+    if (stat(path.c_str(), &info) != 0)
+        throw std::runtime_error(
+            "Cannot access configuration file: " + path);
+
+    if (!S_ISREG(info.st_mode))
+        throw std::runtime_error(
+            "Configuration path is not a regular file: " + path);
+
+    if (access(path.c_str(), R_OK) != 0)
+        throw std::runtime_error(
+            "Configuration file is not readable: " + path);
 }
 
 void webserv::take_path()

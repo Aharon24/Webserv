@@ -11,6 +11,8 @@
 #include "parser.hpp"
 #include "ServerConfig.hpp"
 
+#include <stdexcept>
+
 
 
 
@@ -20,6 +22,7 @@ class webserv
 private:
     std::string _config_path;
     config _conf;
+    ServerConfig conf;
 public:
     webserv();
     webserv& operator=(const webserv &ot);

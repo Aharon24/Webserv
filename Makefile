@@ -7,7 +7,8 @@ SRCS = src/main.cpp \
        src/webserv.cpp \
 	   src/config.cpp \
 	   src/Tokenizer.cpp \
-	   src/parser.cpp
+	   src/parser.cpp \
+	   src/Server.cpp
 
 OBJS = $(SRCS:.cpp=.o)
 

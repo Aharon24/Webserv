@@ -4,11 +4,13 @@
 #include <vector>
 #include <stdexcept>
 #include "Tokenizer.hpp"
-#include "Config.hpp"
+#include "config.hpp"
 #include "ServerConfig.hpp"
 #include <cstdlib>
 
-
+#include <sys/stat.h>
+#include <unistd.h>
+#include <stdexcept>
 
 
 class Parser
@@ -16,7 +18,10 @@ class Parser
 private:
     std::vector<Token> _tokens;
     size_t _index;
+    bool _listen_defined;
+    bool _root_defined;
     ServerConfig conf;
+
 public:
     Parser();
     Parser(const std::vector<Token>& _tokens);
@@ -34,6 +39,7 @@ public:
     void parse_index(void);
     bool is_valid_ipv4(const std::string& ip);
     bool is_valid_port(const std::string& port);
+    void validate_root(void);
 };
 
 #endif
