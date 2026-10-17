@@ -3,6 +3,7 @@
 
 
 
+
 void init_webserv(std::string &path)
 {
     webserv web(path);
@@ -21,6 +22,18 @@ void init_webserv(std::string &path)
         pars.set_token(Tok.get_token());
         conf =  pars.start_parse();
         pars.validate_root();
+        Server serv(conf);
+        serv.create_socket();
+
+        std::cout << "Socket created successfully" << std::endl;
+        serv.bind_socket();
+        serv.listen_socket();
+        int client_fd = serv.accept_connection();
+
+        std::cout << "Client connected! FD: "
+                  << client_fd << std::endl;
+        serv.read_request(client_fd);
+        close(client_fd);
     }
     catch (const std::exception& e)
     {

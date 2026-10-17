@@ -9,22 +9,25 @@
 #include <unistd.h>
 #include <stdexcept>
 #include <cstring>
+#include <iostream>
 
 class Server
 {
 private:
     int _server_fd;
     ServerConfig _conf;
+    Server(const Server &other);
+    Server &operator=(const Server &other);
 
 public:
-    Server();
     Server(const ServerConfig &conf);
-    Server(const Server &other);
-    Server& operator=(const Server &other);
     ~Server();
 
     void create_socket();
     void bind_socket();
+    void listen_socket();
+    int accept_connection();
+    void read_request(int client_fd);
 };
 
 #endif
