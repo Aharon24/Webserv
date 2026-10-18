@@ -2,6 +2,7 @@
 #define SERVER_HPP
 
 #include "ServerConfig.hpp"
+#include "HttpRequest.hpp"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -10,6 +11,9 @@
 #include <stdexcept>
 #include <cstring>
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
 
 class Server
 {
@@ -27,7 +31,10 @@ public:
     void bind_socket();
     void listen_socket();
     int accept_connection();
-    void read_request(int client_fd);
+    std::string read_request(int client_fd);
+    void send_response(int client_fd, const HttpRequest &request);
+    void send_all(int client_fd, const std::string &data);
+
 };
 
 #endif

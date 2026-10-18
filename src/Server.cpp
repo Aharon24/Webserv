@@ -44,7 +44,7 @@ int Server::accept_connection()
     return client_fd;
 }
 
-void Server::read_request(int client_fd)
+std::string Server::read_request(int client_fd)
 {
     char buffer[4096];
 
@@ -53,13 +53,83 @@ void Server::read_request(int client_fd)
     if (bytes_read > 0)
     {
         buffer[bytes_read] = '\0';
-
         std::cout << "HTTP request received:\n" << buffer << std::endl;
+        return std::string(buffer, bytes_read);
     }
     else if (bytes_read == 0)
-        std::cout << "Client disconnected" << std::endl;
+        throw std::runtime_error("Client disconnected");
     else
         throw std::runtime_error("Failed to read HTTP request");
+    return "";
+}
+
+void Server::send_all(int client_fd, const std::string &data)
+{
+    std::string::size_type sent = 0;
+    while (sent < data.size())
+    {
+        ssize_t result = send(
+            client_fd,
+            data.c_str() + sent,
+            data.size() - sent,
+            0
+        );
+
+        if (result <= 0)
+            throw std::runtime_error("Failed to send HTTP response");
+
+        sent += static_cast<std::string::size_type>(result);
+    }
+}
+
+
+void Server::send_response(int client_fd, const HttpRequest &request)
+{
+    std::string file_path;
+    std::string body;
+    std::string response;
+    std::string status;
+
+    if(request.method != "GET")
+    {
+        body = "405 Method Not Allowed\n";
+        status = "405 Method Not Allowed";
+    }
+    else if (request.path.find("..") != std::string::npos)
+    {
+        body = "403 Forbidden\n";
+        status = "403 Forbidden";
+    }
+    else
+    {
+        if (request.path == "/")
+            file_path = _conf.root + "/" + _conf.index;
+        else
+            file_path = _conf.root + request.path;
+        std::ifstream file(file_path.c_str());
+        if (!file.is_open())
+        {
+            body = "404 Not Found\n";
+            status = "404 Not Found";
+        }
+        else
+        {
+            std::ostringstream content;
+            content << file.rdbuf();
+            body = content.str();
+            status = "200 OK";
+        }
+    }
+    std::ostringstream header;
+    header << request.version << " " << status << "\r\n";
+    header << "Content-Length: " << body.size() << "\r\n";
+    header << "Content-Type: text/html; charset=UTF-8\r\n";
+    header << "Connection: close\r\n";
+    header << "\r\n";
+
+    response = header.str() + body;
+
+    send_all(client_fd, response);
 }
 
 Server::~Server()

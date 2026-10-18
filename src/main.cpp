@@ -1,5 +1,6 @@
 #include "../hpp/webserv.hpp"
 #include "../hpp/Server.hpp"
+#include "../hpp/HttpRequest.hpp"
 
 
 
@@ -10,6 +11,8 @@ void init_webserv(std::string &path)
     Tokenizer Tok;
     Parser pars;
     ServerConfig conf;
+    HttpParser parser;
+    HttpRequest request;
 
 
     // pars.print_tokens();
@@ -28,12 +31,22 @@ void init_webserv(std::string &path)
         std::cout << "Socket created successfully" << std::endl;
         serv.bind_socket();
         serv.listen_socket();
-        int client_fd = serv.accept_connection();
 
-        std::cout << "Client connected! FD: "
-                  << client_fd << std::endl;
-        serv.read_request(client_fd);
-        close(client_fd);
+        while(true)
+        {
+            int client_fd = serv.accept_connection();
+
+            std::cout << "Client connected! FD: "
+                      << client_fd << std::endl;
+            std::string raw_request = serv.read_request(client_fd);
+            request = parser.parse(raw_request);
+            std::cout << "method: " << request.method << std::endl;
+            std::cout << "path: " << request.path << std::endl;
+            std::cout << "version: " << request.version << std::endl;
+            serv.send_response(client_fd, request);
+
+            close(client_fd);
+        }
     }
     catch (const std::exception& e)
     {
