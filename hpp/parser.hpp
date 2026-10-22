@@ -40,6 +40,9 @@ public:
     bool is_valid_ipv4(const std::string& ip);
     bool is_valid_port(const std::string& port);
     void validate_root(void);
+    void parse_location(void);
+    void parse_location_root(LocationConfig &location);
+    void parse_location_index(LocationConfig &location);
 };
 
 #endif

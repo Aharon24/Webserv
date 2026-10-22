@@ -82,6 +82,13 @@ void Server::send_all(int client_fd, const std::string &data)
     }
 }
 
+const Server::LocationConfig *find_location(const std::string &path) const
+{
+    const LocationConfig *best = NULL;
+
+
+}
+
 
 void Server::send_response(int client_fd, const HttpRequest &request)
 {
@@ -102,23 +109,10 @@ void Server::send_response(int client_fd, const HttpRequest &request)
     }
     else
     {
-        if (request.path == "/")
-            file_path = _conf.root + "/" + _conf.index;
-        else
-            file_path = _conf.root + request.path;
-        std::ifstream file(file_path.c_str());
-        if (!file.is_open())
-        {
-            body = "404 Not Found\n";
-            status = "404 Not Found";
-        }
-        else
-        {
-            std::ostringstream content;
-            content << file.rdbuf();
-            body = content.str();
-            status = "200 OK";
-        }
+        const LocationConfig *location = find_location(request.path);
+        file_path = build_file_path(request, location);
+        
+
     }
     std::ostringstream header;
     header << request.version << " " << status << "\r\n";

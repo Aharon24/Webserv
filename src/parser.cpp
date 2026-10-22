@@ -213,6 +213,73 @@ void Parser::validate_root(void)
 }
 
 
+void Parser::parse_location_root(LocationConfig &location)
+{
+    if (_index >= _tokens.size() ||
+        _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected path after 'root' in location");
+    location.root = _tokens[_index].value;
+    ++_index;
+    if (_index >= _tokens.size() ||
+        _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after location root");
+    ++_index;
+}
+   
+void Parser::parse_location_index(LocationConfig &location)
+{
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected filename after 'index' in location");
+    location.index = _tokens[_index].value;
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after location index");
+    ++_index;
+}
+
+
+
+void Parser::parse_location()
+{
+    LocationConfig location;
+    bool root_defined = false;
+    bool index_defined = false;
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected path after 'location'");
+    location.path = _tokens[_index].value;
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_LBRACE)
+        throw std::runtime_error("Expected '{' after location path");
+    ++_index;
+    while (_index < _tokens.size() && _tokens[_index].type != TOKEN_RBRACE)
+    {
+        if (_tokens[_index].type == TOKEN_ROOT)
+        {
+            if (root_defined)
+                throw std::runtime_error("Duplicate 'root' directive in location");
+            ++_index;
+            parse_location_root(location);
+            root_defined = true;
+        }
+        else if (_tokens[_index].type == TOKEN_INDEX)
+        {
+            if (index_defined)
+                throw std::runtime_error("Duplicate 'index' directive in location");
+            ++_index;
+            parse_location_index(location);
+            index_defined = true; 
+        }
+        else
+            throw std::runtime_error("Unknown directive inside location: '" + _tokens[_index].value + "'");
+    }
+    if (_index >= _tokens.size())
+        throw std::runtime_error("Unexpected end of file: expected '}' after location");
+    ++_index;
+    conf.locations.push_back(location);
+}
+
+
 void Parser::parse_server(void)
 {
     if (_index >= _tokens.size() ||
@@ -232,6 +299,8 @@ void Parser::parse_server(void)
             parse_root();
         else if (_tokens[_index].type == TOKEN_INDEX)
             parse_index();
+        else if (_tokens[_index].type == TOKEN_LOCATION)
+            parse_location();
         else
             throw std::runtime_error("Unknown directive inside server");
     }

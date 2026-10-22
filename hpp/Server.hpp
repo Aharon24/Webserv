@@ -20,8 +20,11 @@ class Server
 private:
     int _server_fd;
     ServerConfig _conf;
+    const LocationConfig *find_location(const std::string &path) const;
+    std::string build_file_path(const HttpRequest &request,const LocationConfig *location) const;
     Server(const Server &other);
     Server &operator=(const Server &other);
+
 
 public:
     Server(const ServerConfig &conf);
