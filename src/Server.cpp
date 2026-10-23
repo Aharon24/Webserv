@@ -82,7 +82,7 @@ void Server::send_all(int client_fd, const std::string &data)
     }
 }
 
-const Server::LocationConfig *find_location(const std::string &path) const
+const LocationConfig *Server::find_location(const std::string &path) const
 {
     const LocationConfig *best = NULL;
 
@@ -131,8 +131,38 @@ void Server::send_response(int client_fd, const HttpRequest &request)
     {
         const LocationConfig *location = find_location(request.path);
         file_path = build_file_path(request, location);
-        
+        struct stat info;
 
+        if (stat(file_path.c_str(), &info) == 0
+            && S_ISDIR(info.st_mode))
+        {
+            std::string index;
+        
+            if (location != NULL && !location->index.empty())
+                index = location->index;
+            else
+                index = _conf.index;
+        
+            if (!file_path.empty() && file_path[file_path.size() - 1] != '/')
+                file_path += '/';
+        
+            file_path += index;
+        }
+
+        std::ifstream file(file_path.c_str(), std::ios::in | std::ios::binary);
+
+        if(!file)
+        {
+            status = "404 Not Found";
+            body = "404 Not Found\n";
+        }
+        else
+        {
+            std::ostringstream content;
+            content << file.rdbuf();
+            body = content.str();
+            status = "200 OK";
+        }
     }
     std::ostringstream header;
     header << request.version << " " << status << "\r\n";
@@ -142,9 +172,34 @@ void Server::send_response(int client_fd, const HttpRequest &request)
     header << "\r\n";
 
     response = header.str() + body;
-
     send_all(client_fd, response);
 }
+
+std::string Server::build_file_path(const HttpRequest &request,const LocationConfig *location) const
+{
+    std::string root;
+    std::string relative_path;
+
+    if (location != NULL)
+    {
+        if (location->root.empty())
+            root = _conf.root;
+        else
+            root = location->root;
+        relative_path = request.path.substr(location->path.size());
+    }
+    else
+    {
+        root = _conf.root;
+        relative_path = request.path;   
+    }
+    if (!relative_path.empty() && relative_path[0] == '/')
+        relative_path.erase(0, 1);
+    if (!root.empty() && root[root.size() - 1] != '/')
+        root += '/';
+    return root + relative_path;
+}
+
 
 Server::~Server()
 {
