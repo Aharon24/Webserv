@@ -86,7 +86,27 @@ const Server::LocationConfig *find_location(const std::string &path) const
 {
     const LocationConfig *best = NULL;
 
+    for (std::size_t i = 0; i < _conf.locations.size(); ++i)
+    {
+        const std::string &prefix = _conf.locations[i].path;
+        bool matches = false;
 
+        if (prefix.empty())
+            continue;
+
+        if (path.size() >= prefix.size() && path.compare(0, prefix.size(), prefix) == 0)
+        {
+            if (path.size() == prefix.size())
+                matches = true;
+            else if (prefix == "/")
+                matches = true;
+            else if (path[prefix.size()] == '/')
+                matches = true;
+        }
+        if (matches &&(best == NULL || prefix.size() > best->path.size()))
+            best = &_conf.locations[i];
+    }
+    return best;
 }
 
 
