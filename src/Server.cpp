@@ -110,68 +110,92 @@ const LocationConfig *Server::find_location(const std::string &path) const
 }
 
 
-void Server::send_response(int client_fd, const HttpRequest &request)
+
+void Server::handle_get(const HttpRequest &request, std::string &status, std::string &body)
 {
     std::string file_path;
-    std::string body;
-    std::string response;
-    std::string status;
-
-    if(request.method != "GET")
+    const LocationConfig *location = find_location(request.path);
+    file_path = build_file_path(request, location);
+    struct stat info;
+    if (stat(file_path.c_str(), &info) == 0 && S_ISDIR(info.st_mode))
     {
-        body = "405 Method Not Allowed\n";
-        status = "405 Method Not Allowed";
+        std::string index;
+    
+        if (location != NULL && !location->index.empty())
+            index = location->index;
+        else
+            index = _conf.index;
+        if (!file_path.empty() && file_path[file_path.size() - 1] != '/')
+            file_path += '/';
+        file_path += index;
     }
-    else if (request.path.find("..") != std::string::npos)
+    std::ifstream file(file_path.c_str(), std::ios::in | std::ios::binary);
+    if(!file)
     {
-        body = "403 Forbidden\n";
-        status = "403 Forbidden";
+        status = "404 Not Found";
+        body = "404 Not Found\n";
     }
     else
     {
-        const LocationConfig *location = find_location(request.path);
-        file_path = build_file_path(request, location);
-        struct stat info;
-
-        if (stat(file_path.c_str(), &info) == 0
-            && S_ISDIR(info.st_mode))
-        {
-            std::string index;
-        
-            if (location != NULL && !location->index.empty())
-                index = location->index;
-            else
-                index = _conf.index;
-        
-            if (!file_path.empty() && file_path[file_path.size() - 1] != '/')
-                file_path += '/';
-        
-            file_path += index;
-        }
-
-        std::ifstream file(file_path.c_str(), std::ios::in | std::ios::binary);
-
-        if(!file)
-        {
-            status = "404 Not Found";
-            body = "404 Not Found\n";
-        }
-        else
-        {
-            std::ostringstream content;
-            content << file.rdbuf();
-            body = content.str();
-            status = "200 OK";
-        }
+        std::ostringstream content;
+        content << file.rdbuf();
+        body = content.str();
+        status = "200 OK";
     }
+}
+void Server::handle_post(const HttpRequest &request, std::string &status, std::string &body)
+{
+        
+    std::cout << "POST method received!" << std::endl;
+    std::cout << "Request path: " << request.path << std::endl;
+
+    status = "501 Not Implemented";
+    body = "POST is not implemented yet\n";
+}
+void Server::handle_delete(const HttpRequest &request, std::string &status, std::string &body)
+{
+    std::cout << "DELETE method received!" << std::endl;
+    std::cout << "Request path: " << request.path << std::endl;
+
+    status = "501 Not Implemented";
+    body = "DELETE is not implemented yet\n";
+}
+
+
+std::string Server::create_response_data(const HttpRequest &request, std::string &status, std::string &body)
+{
     std::ostringstream header;
     header << request.version << " " << status << "\r\n";
     header << "Content-Length: " << body.size() << "\r\n";
     header << "Content-Type: text/html; charset=UTF-8\r\n";
     header << "Connection: close\r\n";
     header << "\r\n";
+    return (header.str());
+}
 
-    response = header.str() + body;
+void Server::send_response(int client_fd, const HttpRequest &request)
+{
+    std::string body;
+    std::string response;
+    std::string status;
+
+    if (request.path.empty() || request.path[0] != '/' || request.path.find("..") != std::string::npos)
+    {
+        status = "403 Forbidden";
+        body = "403 Forbidden\n";
+    }
+    else if(request.method == "GET")
+        handle_get(request, status, body);
+    else if(request.method == "POST")
+        handle_post(request, status, body);
+    else if(request.method == "DELETE")
+        handle_delete(request, status, body);
+    else
+    {
+        status = "405 Method Not Allowed";
+        body = "405 Method Not Allowed\n";
+    }
+    response = create_response_data(request, status, body) + body;
     send_all(client_fd, response);
 }
 
@@ -200,6 +224,89 @@ std::string Server::build_file_path(const HttpRequest &request,const LocationCon
     return root + relative_path;
 }
 
+
+void Server::remove_client(int client_fd, std::vector<int> &clients)
+{
+    close(client_fd);
+    for (std::vector<int>::iterator it = clients.begin(); it != clients.end(); ++it)
+    {
+        if (*it == client_fd)
+        {
+            clients.erase(it);
+            break;
+        }
+    }
+}
+
+void Server::handle_client_event(int client_fd, std::vector<int> &clients, HttpParser &parser)
+{
+    try
+    {
+        std::string raw_request = read_request(client_fd);
+        HttpRequest request = parser.parse(raw_request);
+        send_response(client_fd, request);
+    }
+    catch(const std::exception& e)
+    {
+        std::cerr << e.what() <<  std::endl;
+    }
+    remove_client(client_fd, clients);
+}
+
+void Server::run(HttpParser &parser)
+{
+    std::vector<int> clients;
+
+    while(true)
+    {
+        std::vector<struct pollfd> fds;
+        struct pollfd server_poll;
+
+        server_poll.fd = _server_fd;
+        server_poll.events = POLLIN;
+        server_poll.revents = 0;
+        fds.push_back(server_poll);
+        for (std::size_t i = 0; i < clients.size(); ++i)
+        {
+            struct pollfd client_poll;
+            client_poll.fd = clients[i];
+            client_poll.events = POLLIN;
+            client_poll.revents = 0;
+
+            fds.push_back(client_poll);
+        }
+        std::cout << "Waiting for events..." << std::endl;
+        int result = poll(&fds[0], fds.size(), -1);
+        std::cout << "poll returned: " << result << std::endl;
+        if (result == -1)
+            throw std::runtime_error("poll failed");
+        for (std::size_t i = 0; i < fds.size(); ++i)
+        {
+            if (fds[i].revents != 0)
+            {
+                std::cout << "FD: " << fds[i].fd
+                          << " Events: " << fds[i].revents
+                          << std::endl;
+            }
+        }
+        if (fds[0].revents & POLLIN)
+        {
+            int client_fd = accept_connection();
+            clients.push_back(client_fd);
+        }
+        for (std::size_t i = 1; i < fds.size(); ++i)
+        {
+            int client_fd = fds[i].fd;
+            short events = fds[i].revents;
+            if (fds[i].revents & POLLIN)
+                handle_client_event(client_fd, clients, parser);
+            else if (events &  POLLNVAL)
+                remove_client(client_fd, clients);
+            else if (events & (POLLHUP | POLLERR))
+                remove_client(client_fd, clients);
+        }
+    }
+}
 
 Server::~Server()
 {

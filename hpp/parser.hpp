@@ -4,7 +4,6 @@
 #include <vector>
 #include <stdexcept>
 #include "Tokenizer.hpp"
-#include "config.hpp"
 #include "ServerConfig.hpp"
 #include <cstdlib>
 

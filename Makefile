@@ -5,7 +5,6 @@ CXXFLAGS = -Wall -Wextra -Werror -std=c++98
 
 SRCS = src/main.cpp \
        src/webserv.cpp \
-	   src/config.cpp \
 	   src/Tokenizer.cpp \
 	   src/parser.cpp \
 	   src/Server.cpp \

@@ -5,7 +5,6 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include "config.hpp"
 #include "Tokenizer.hpp"
 #include <unistd.h>
 #include "parser.hpp"
@@ -21,8 +20,6 @@ class webserv
 {
 private:
     std::string _config_path;
-    config _conf;
-    ServerConfig conf;
 public:
     webserv();
     webserv& operator=(const webserv &ot);

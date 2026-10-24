@@ -14,6 +14,10 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <sys/stat.h>
+
+#include <poll.h> 
+#include <vector>
 
 class Server
 {
@@ -29,6 +33,19 @@ private:
 public:
     Server(const ServerConfig &conf);
     ~Server();
+
+    // GET POST DELTETE
+    void handle_get(const HttpRequest &request, std::string &status, std::string &body);
+    void handle_post(const HttpRequest &request, std::string &status, std::string &body);
+    void handle_delete(const HttpRequest &request, std::string &status, std::string &body); 
+    std::string create_response_data(const HttpRequest &request, std::string &status, std::string &body);
+    void remove_client(int client_fd, std::vector<int> &clients);
+    //
+
+    // Poll
+    void run(HttpParser &parser);
+    void handle_client_event(int client_fd, std::vector<int> &clients, HttpParser &parser);
+
 
     void create_socket();
     void bind_socket();

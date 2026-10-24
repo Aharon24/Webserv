@@ -39,17 +39,28 @@ void webserv::check_path(std::string &path)
             "Configuration file is not readable: " + path);
 }
 
+
 void webserv::take_path()
 {
-    if(this->_config_path == "")
-    {
+    if (this->_config_path == "")
         this->_config_path = "config/default.conf";
-        this->_conf.set_path("config/default.conf");
-    }
-    else
-        this->_conf.set_path(this->_config_path);
+
     this->check_path(this->_config_path);
 }
+
+//old 
+
+// void webserv::take_path()
+// {
+//     if(this->_config_path == "")
+//     {
+//         this->_config_path = "config/default.conf";
+//         this->_conf.set_path("config/default.conf");
+//     }
+//     else
+//         this->_conf.set_path(this->_config_path);
+//     this->check_path(this->_config_path);
+// }
 
 std::string webserv::get_path()
 {
