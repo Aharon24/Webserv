@@ -3,13 +3,14 @@
 
 #include <vector>
 #include <stdexcept>
-#include "Tokenizer.hpp"
-#include "ServerConfig.hpp"
 #include <cstdlib>
-
-#include <sys/stat.h>
+#include <string>
 #include <unistd.h>
 #include <stdexcept>
+#include <sys/stat.h>
+
+#include "ServerConfig.hpp"
+#include "Tokenizer.hpp"
 
 
 class Parser
@@ -17,31 +18,33 @@ class Parser
 private:
     std::vector<Token> _tokens;
     size_t _index;
-    bool _listen_defined;
-    bool _root_defined;
-    ServerConfig conf;
 
 public:
     Parser();
     Parser(const std::vector<Token>& _tokens);
     Parser(const Parser &ot);
     Parser& operator=(const Parser &ot);
-    void print_tokens( void );
-    ServerConfig start_parse(void);
-    ~Parser();
 
+    ~Parser();
+    
+    void print_tokens( void );
     void set_token(const std::vector<Token>& _tokens);
 
-    void parse_server(void);
-    void parse_listen(void);
-    void parse_root(void);
-    void parse_index(void);
-    bool is_valid_ipv4(const std::string& ip);
-    bool is_valid_port(const std::string& port);
-    void validate_root(void);
-    void parse_location(void);
+    std::vector<ServerConfig> start_parse(void);
+    
+    void parse_server(ServerConfig &conf);
+    void parse_listen(ServerConfig &conf, bool &listen_defined);
+    void parse_root(ServerConfig &conf, bool &root_defined);
+    void parse_index(ServerConfig &conf, bool &index_defined);
+
+    bool is_valid_ipv4(const std::string &ip);
+    bool is_valid_port(const std::string &port);
+
+    void validate_root(const ServerConfig &conf) const;
+
+    void parse_location(ServerConfig &conf);
     void parse_location_root(LocationConfig &location);
-    void parse_location_index(LocationConfig &location);
+    void parse_location_index(LocationConfig &location);        
 };
 
 #endif

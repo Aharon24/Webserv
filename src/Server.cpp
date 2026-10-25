@@ -6,11 +6,32 @@ Server::Server(const ServerConfig &conf)
 {
 }
 
+void Server::set_nonblocking(int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+
+    if (flags == -1)
+        throw std::runtime_error("Failed to get socket flags");
+
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+        throw std::runtime_error("Failed to set non-blocking mode");
+}
+
 void Server::create_socket()
 {
     _server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (_server_fd == -1)
         throw std::runtime_error("Failed to create socket");
+    try
+    {
+        set_nonblocking(_server_fd);
+    }
+    catch (...)
+    {
+        close(_server_fd);
+        _server_fd = -1;
+        throw;
+    }
 }
 
 
@@ -40,28 +61,24 @@ int Server::accept_connection()
     int client_fd = accept(_server_fd, NULL, NULL);
 
     if (client_fd == -1)
+    {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return -1;
         throw std::runtime_error("Failed to accept connection");
+    }
+    try
+    {
+        set_nonblocking(client_fd);
+    }
+    catch (...)
+    {
+        close(client_fd);
+        throw;
+    }
     return client_fd;
 }
 
-std::string Server::read_request(int client_fd)
-{
-    char buffer[4096];
 
-    ssize_t bytes_read = read(client_fd, buffer, sizeof(buffer) - 1);
-
-    if (bytes_read > 0)
-    {
-        buffer[bytes_read] = '\0';
-        std::cout << "HTTP request received:\n" << buffer << std::endl;
-        return std::string(buffer, bytes_read);
-    }
-    else if (bytes_read == 0)
-        throw std::runtime_error("Client disconnected");
-    else
-        throw std::runtime_error("Failed to read HTTP request");
-    return "";
-}
 
 void Server::send_all(int client_fd, const std::string &data)
 {
@@ -173,31 +190,34 @@ std::string Server::create_response_data(const HttpRequest &request, std::string
     return (header.str());
 }
 
-void Server::send_response(int client_fd, const HttpRequest &request)
+std::string Server::build_response(const HttpRequest &request)
 {
     std::string body;
-    std::string response;
     std::string status;
 
-    if (request.path.empty() || request.path[0] != '/' || request.path.find("..") != std::string::npos)
+    if (request.path.empty() ||
+        request.path[0] != '/' ||
+        request.path.find("..") != std::string::npos)
     {
         status = "403 Forbidden";
         body = "403 Forbidden\n";
     }
-    else if(request.method == "GET")
+    else if (request.method == "GET")
         handle_get(request, status, body);
-    else if(request.method == "POST")
+    else if (request.method == "POST")
         handle_post(request, status, body);
-    else if(request.method == "DELETE")
+    else if (request.method == "DELETE")
         handle_delete(request, status, body);
     else
     {
         status = "405 Method Not Allowed";
         body = "405 Method Not Allowed\n";
     }
-    response = create_response_data(request, status, body) + body;
-    send_all(client_fd, response);
+
+    return create_response_data(request, status, body) + body;
 }
+
+
 
 std::string Server::build_file_path(const HttpRequest &request,const LocationConfig *location) const
 {
@@ -225,88 +245,167 @@ std::string Server::build_file_path(const HttpRequest &request,const LocationCon
 }
 
 
-void Server::remove_client(int client_fd, std::vector<int> &clients)
+void Server::remove_client(int client_fd, std::vector<ClientConnection> &clients)
 {
-    close(client_fd);
-    for (std::vector<int>::iterator it = clients.begin(); it != clients.end(); ++it)
+    for (std::vector<ClientConnection>::iterator it = clients.begin(); it != clients.end(); ++it)
     {
-        if (*it == client_fd)
+        if (it->fd == client_fd)
         {
+            close(it->fd);
             clients.erase(it);
-            break;
+            return;
         }
     }
 }
 
-void Server::handle_client_event(int client_fd, std::vector<int> &clients, HttpParser &parser)
+
+
+bool Server::handle_client_event(ClientConnection &client, HttpParser &parser)
 {
+    char buffer[4096];
+
+    ssize_t bytes_read = read(client.fd, buffer, sizeof(buffer));
+
+    if (bytes_read == 0)
+        return false;
+
+    if (bytes_read < 0)
+    {
+        std::cerr << "Failed to read HTTP request" << std::endl;
+        return false;
+    }
+
+    client.request_buffer.append(buffer, static_cast<std::string::size_type>(bytes_read));
+
+    std::cout << "HTTP request received:\n" << client.request_buffer << std::endl;
+
+    if (client.request_buffer.find("\r\n\r\n") == std::string::npos)
+        return true;
+
     try
     {
-        std::string raw_request = read_request(client_fd);
-        HttpRequest request = parser.parse(raw_request);
-        send_response(client_fd, request);
+        HttpRequest request = parser.parse(client.request_buffer);
+
+        client.response_buffer = build_response(request);
+        client.request_complete = true;
+        client.response_ready = true;
     }
-    catch(const std::exception& e)
+    catch (const std::exception &e)
     {
-        std::cerr << e.what() <<  std::endl;
+        std::cerr << e.what() << std::endl;
+
+        HttpRequest request;
+        request.version = "HTTP/1.1";
+
+        std::string status = "400 Bad Request";
+        std::string body = "400 Bad Request\n";
+
+        client.response_buffer = create_response_data(request, status, body) + body;
+        client.request_complete = true;
+        client.response_ready = true;
     }
-    remove_client(client_fd, clients);
+
+    return true;
+}
+
+
+bool Server::handle_client_write(ClientConnection &client)
+{
+    if (client.sent_bytes >= client.response_buffer.size())
+        return false;
+
+    ssize_t bytes_sent = send(client.fd, client.response_buffer.c_str() + client.sent_bytes,
+        client.response_buffer.size() - client.sent_bytes,
+        0
+    );
+
+    if (bytes_sent <= 0)
+        return false;
+
+    client.sent_bytes += static_cast<std::size_t>(bytes_sent);
+
+    return client.sent_bytes < client.response_buffer.size();
 }
 
 void Server::run(HttpParser &parser)
 {
-    std::vector<int> clients;
+    std::vector<ClientConnection> clients;
 
-    while(true)
+    while (true)
     {
         std::vector<struct pollfd> fds;
-        struct pollfd server_poll;
 
+        struct pollfd server_poll;
         server_poll.fd = _server_fd;
         server_poll.events = POLLIN;
         server_poll.revents = 0;
         fds.push_back(server_poll);
+
         for (std::size_t i = 0; i < clients.size(); ++i)
         {
             struct pollfd client_poll;
-            client_poll.fd = clients[i];
-            client_poll.events = POLLIN;
-            client_poll.revents = 0;
 
+            client_poll.fd = clients[i].fd;
+            client_poll.events = clients[i].response_ready ? POLLOUT : POLLIN;
+            client_poll.revents = 0;
             fds.push_back(client_poll);
         }
-        std::cout << "Waiting for events..." << std::endl;
+
         int result = poll(&fds[0], fds.size(), -1);
-        std::cout << "poll returned: " << result << std::endl;
+
         if (result == -1)
-            throw std::runtime_error("poll failed");
-        for (std::size_t i = 0; i < fds.size(); ++i)
         {
-            if (fds[i].revents != 0)
-            {
-                std::cout << "FD: " << fds[i].fd
-                          << " Events: " << fds[i].revents
-                          << std::endl;
-            }
+            if (errno == EINTR)
+                continue;
+            throw std::runtime_error("poll failed");
         }
+
         if (fds[0].revents & POLLIN)
         {
             int client_fd = accept_connection();
-            clients.push_back(client_fd);
+            if (client_fd != -1)
+                clients.push_back(ClientConnection(client_fd));
         }
+
         for (std::size_t i = 1; i < fds.size(); ++i)
         {
             int client_fd = fds[i].fd;
             short events = fds[i].revents;
-            if (fds[i].revents & POLLIN)
-                handle_client_event(client_fd, clients, parser);
-            else if (events &  POLLNVAL)
+
+            if (events == 0)
+                continue;
+
+            std::vector<ClientConnection>::iterator it = clients.begin();
+
+            while (it != clients.end() && it->fd != client_fd)
+                ++it;
+
+            if (it == clients.end())
+                continue;
+
+            if (events & POLLNVAL)
+            {
                 remove_client(client_fd, clients);
-            else if (events & (POLLHUP | POLLERR))
+                continue;
+            }
+
+            bool keep_client = true;
+
+            if (events & POLLIN)
+                keep_client = handle_client_event(*it, parser);
+
+            if (keep_client && (events & POLLOUT))
+                keep_client = handle_client_write(*it);
+
+            if (events & (POLLHUP | POLLERR))
+                keep_client = false;
+
+            if (!keep_client)
                 remove_client(client_fd, clients);
         }
     }
 }
+
 
 Server::~Server()
 {

@@ -1,33 +1,30 @@
 #include "parser.hpp"
 
-Parser::Parser(): _index(0), _listen_defined(false), _root_defined(false)
+Parser::Parser() : _index(0)
 {
 }
-Parser::Parser(const std::vector<Token>& _tokens): _tokens(_tokens), _index(0), _listen_defined(false), _root_defined(false)
-{
-}
-
-void Parser::set_token(const std::vector<Token>& _tokens)
-{
-    this->_tokens = _tokens;
-    this->_index = 0;
-    this->_listen_defined = false;
-}
-Parser::Parser(const Parser &ot): _tokens(ot._tokens), _index(ot._index), _listen_defined(ot._listen_defined), _root_defined(ot._root_defined), conf(ot.conf)
+Parser::Parser(const std::vector<Token> &tokens) : _tokens(tokens), _index(0)
 {
 }
 
-Parser& Parser::operator=(const Parser &ot)
+void Parser::set_token(const std::vector<Token> &tokens)
 {
-    if(this != &ot)
+    _tokens = tokens;
+    _index = 0;
+}
+
+Parser::Parser(const Parser &other) : _tokens(other._tokens), _index(other._index)
+{
+}
+
+Parser &Parser::operator=(const Parser &other)
+{
+    if (this != &other)
     {
-        this->_index = ot._index;
-        this->_tokens = ot._tokens;
-        this->_listen_defined = ot._listen_defined;
-        this->conf = ot.conf;
-        this->_root_defined = ot._root_defined;
+        _tokens = other._tokens;
+        _index = other._index;
     }
-    return(*this);
+    return *this;
 }
 
 
@@ -44,62 +41,61 @@ void Parser::print_tokens(void)
 }
 
 
-ServerConfig Parser::start_parse()
+std::vector<ServerConfig> Parser::start_parse()
 {
     _index = 0;
-    _listen_defined = false;
-    _root_defined = false;
+    std::vector<ServerConfig> servers;
     if (_tokens.empty())
         throw std::runtime_error("Config file is empty");
 
 
-    if (_tokens[_index].type != TOKEN_SERVER)
-        throw std::runtime_error(
-            "Expected 'server' at the beginning of config"
-        );
+    while (_index < _tokens.size())
+    {
+        if (_tokens[_index].type != TOKEN_SERVER)
+            throw std::runtime_error(
+                "Expected 'server' at the beginning of server block"
+            );
 
-    parse_server();
-    if (_index < _tokens.size())
-        throw std::runtime_error(
-            "Unexpected token after server block: '" +
-            _tokens[_index].value + "'"
-        );
-    return conf;
+        ServerConfig conf;
+        parse_server(conf);
+
+        servers.push_back(conf);
+    }
+    return servers;
 }
 
 
-void Parser::parse_root(void)
+void Parser::parse_root(ServerConfig &conf, bool &root_defined)
 {
-    if (_root_defined)
+    if (root_defined)
         throw std::runtime_error("Duplicate 'root' directive");
     ++_index;
-    if (_index >= _tokens.size() ||
-        _tokens[_index].type != TOKEN_ARGUMENT)
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
         throw std::runtime_error("Expected path after 'root'");
 
     std::string path = _tokens[_index].value;
     if (path.empty())
         throw std::runtime_error("Root path cannot be empty");
     ++_index;
-    if (_index >= _tokens.size() ||
-        _tokens[_index].type != TOKEN_SEMICOLON)
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
         throw std::runtime_error("Expected ';' after 'root'");
     conf.root = path;
     ++_index;
-    _root_defined = true;
+    root_defined = true;
 }
-void Parser::parse_index(void)
+void Parser::parse_index( ServerConfig &conf, bool &index_defined)
 {
+    if (index_defined)
+        throw std::runtime_error("Duplicate 'index' directive");
     ++_index;
-    if (_index >= _tokens.size() ||
-        _tokens[_index].type != TOKEN_ARGUMENT)
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
         throw std::runtime_error("Expected filename after 'index'");
     conf.index = _tokens[_index].value;
     ++_index;
-    if (_index >= _tokens.size() ||
-        _tokens[_index].type != TOKEN_SEMICOLON)
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
         throw std::runtime_error("Expected ';' after 'index'");
     ++_index;
+    index_defined = true;
 }
 
 
@@ -156,23 +152,19 @@ bool Parser::is_valid_port(const std::string& port)
     return true;
 }
 
-void Parser::parse_listen(void)
+void Parser::parse_listen(ServerConfig &conf, bool &listen_defined)
 {
-    if (_listen_defined)
+    if (listen_defined)
         throw std::runtime_error("Duplicate 'listen' directive");
     ++_index;
 
-    if (_index >= _tokens.size() ||
-        _tokens[_index].type != TOKEN_ARGUMENT)
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
         throw std::runtime_error("Expected address after 'listen'");
 
     std::string address = _tokens[_index].value;
     std::string::size_type colon = address.find(':');
-    if (colon == std::string::npos ||
-        address.find(':', colon + 1) != std::string::npos)
-        throw std::runtime_error(
-            "Invalid listen address: expected IPv4:port"
-        );
+    if (colon == std::string::npos || address.find(':', colon + 1) != std::string::npos)
+        throw std::runtime_error("Invalid listen address: expected IPv4:port");
     std::string ip = address.substr(0, colon);
     std::string port = address.substr(colon + 1);
 
@@ -192,10 +184,10 @@ void Parser::parse_listen(void)
         _tokens[_index].type != TOKEN_SEMICOLON)
         throw std::runtime_error("Expected ';' after 'listen'");
     ++_index;
-    _listen_defined = true;
+    listen_defined = true;
 }
 
-void Parser::validate_root(void)
+void Parser::validate_root(const ServerConfig &conf) const
 {
     if (conf.root.empty())
         throw std::runtime_error("Missing required directive: root");
@@ -239,7 +231,7 @@ void Parser::parse_location_index(LocationConfig &location)
 
 
 
-void Parser::parse_location()
+void Parser::parse_location(ServerConfig &conf)
 {
     LocationConfig location;
     bool root_defined = false;
@@ -280,27 +272,27 @@ void Parser::parse_location()
 }
 
 
-void Parser::parse_server(void)
+void Parser::parse_server(ServerConfig &conf)
 {
-    if (_index >= _tokens.size() ||
-        _tokens[_index].type != TOKEN_SERVER)
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SERVER)
         throw std::runtime_error("Expected 'server'");
     ++_index;
-    if (_index >= _tokens.size() ||
-        _tokens[_index].type != TOKEN_LBRACE)
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_LBRACE)
         throw std::runtime_error("Expected '{' after 'server'");
     ++_index;
-    while (_index < _tokens.size() &&
-           _tokens[_index].type != TOKEN_RBRACE)
+    bool listen_defined = false;
+    bool root_defined = false;
+    bool index_defined = false;
+    while (_index < _tokens.size() &&  _tokens[_index].type != TOKEN_RBRACE)
     {
         if (_tokens[_index].type == TOKEN_LISTEN)
-            parse_listen();
+            parse_listen(conf, listen_defined);
         else if (_tokens[_index].type == TOKEN_ROOT)
-            parse_root();
+            parse_root(conf, root_defined);
         else if (_tokens[_index].type == TOKEN_INDEX)
-            parse_index();
+            parse_index(conf, index_defined);
         else if (_tokens[_index].type == TOKEN_LOCATION)
-            parse_location();
+            parse_location(conf);
         else
             throw std::runtime_error("Unknown directive inside server");
     }
@@ -308,7 +300,7 @@ void Parser::parse_server(void)
         throw std::runtime_error("Unexpected end of file: expected '}'");
 
     ++_index;
-    if (!_listen_defined)
+    if (!listen_defined)
         throw std::runtime_error("Missing required directive: listen");
 }
 

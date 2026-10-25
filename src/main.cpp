@@ -10,9 +10,9 @@ void init_webserv(std::string &path)
     webserv web(path);
     Tokenizer Tok;
     Parser pars;
-    ServerConfig conf;
     HttpParser parser;
     HttpRequest request;
+    std::vector<ServerConfig> configs;
 
 
     // pars.print_tokens();
@@ -20,43 +20,38 @@ void init_webserv(std::string &path)
     try
     {
         web.take_path();
-        Tok.open_file_empty_and_valid(web.get_path());
+        if (!Tok.open_file_empty_and_valid(web.get_path()))
+            throw std::runtime_error("Invalid configuration file");
+
         Tok.create_tokens();
         pars.set_token(Tok.get_token());
-        conf =  pars.start_parse();
-        pars.validate_root();
-        Server serv(conf);
-        serv.create_socket();
 
+        configs =  pars.start_parse();
+
+        for (std::size_t i = 0; i < configs.size(); ++i)
+            pars.validate_root(configs[i]);
+
+        for (std::size_t i = 0; i < configs.size(); ++i)
+        {
+            std::cout << "\nServer " << i + 1 << std::endl;
+            std::cout << "IP: " << configs[i].ip << std::endl;
+            std::cout << "Port: " << configs[i].port << std::endl;
+            std::cout << "Root: " << configs[i].root << std::endl;
+            std::cout << "Index: " << configs[i].index << std::endl;
+        }
+        Server serv(configs[0]);
+        serv.create_socket();
         std::cout << "Socket created successfully" << std::endl;
+
         serv.bind_socket();
         serv.listen_socket();
         serv.run(parser);
-        // while(true)
-        // {
-        //     int client_fd = serv.accept_connection();
-
-        //     std::cout << "Client connected! FD: "
-        //               << client_fd << std::endl;
-        //     std::string raw_request = serv.read_request(client_fd);
-        //     request = parser.parse(raw_request);
-        //     std::cout << "method: " << request.method << std::endl;
-        //     std::cout << "path: " << request.path << std::endl;
-        //     std::cout << "version: " << request.version << std::endl;
-        //     serv.send_response(client_fd, request);
-
-        //     close(client_fd);
-        // }
     }
     catch (const std::exception& e)
     {
         std::cerr << "Config error: " << e.what() << std::endl;
         return ;
     }
-    std::cout << "IP: " << conf.ip << std::endl;
-    std::cout << "Port: " << conf.port << std::endl;
-    std::cout << "Root: " << conf.root << std::endl;
-    std::cout << "Index: " << conf.index << std::endl;
 
 }
 
