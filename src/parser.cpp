@@ -154,8 +154,6 @@ bool Parser::is_valid_port(const std::string& port)
 
 void Parser::parse_listen(ServerConfig &conf, bool &listen_defined)
 {
-    if (listen_defined)
-        throw std::runtime_error("Duplicate 'listen' directive");
     ++_index;
 
     if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
@@ -174,17 +172,28 @@ void Parser::parse_listen(ServerConfig &conf, bool &listen_defined)
     if (!is_valid_port(port))
         throw std::runtime_error("Invalid port");
 
-    conf.ip = ip;
-    conf.port = std::atoi(port.c_str());
+    ListenConfig listen;
+    listen.ip = ip;
+    listen.port = std::atoi(port.c_str());
 
-    std::cout << "Listen IP: " << ip << std::endl;
-    std::cout << "Listen port: " << port << std::endl;
+    for (std::size_t i = 0; i < conf.listens.size(); ++i)
+    {
+        if (conf.listens[i].ip == listen.ip && conf.listens[i].port == listen.port)
+            throw std::runtime_error("Duplicate listen address");
+    }
     ++_index;
-    if (_index >= _tokens.size() ||
-        _tokens[_index].type != TOKEN_SEMICOLON)
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
         throw std::runtime_error("Expected ';' after 'listen'");
     ++_index;
     listen_defined = true;
+    conf.listens.push_back(listen);
+    if (conf.listens.size() == 1)
+    {
+        conf.ip = listen.ip;
+        conf.port = listen.port;
+    }
+    std::cout << "Listen IP: " << ip << std::endl;
+    std::cout << "Listen port: " << port << std::endl;
 }
 
 void Parser::validate_root(const ServerConfig &conf) const

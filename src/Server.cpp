@@ -2,7 +2,7 @@
 
 
 Server::Server(const ServerConfig &conf)
-    : _server_fd(-1), _conf(conf)
+    :  _conf(conf)
 {
 }
 
@@ -19,46 +19,54 @@ void Server::set_nonblocking(int fd)
 
 void Server::create_socket()
 {
-    _server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (_server_fd == -1)
-        throw std::runtime_error("Failed to create socket");
-    try
+    for (std::size_t i = 0; i < _conf.listens.size(); ++i)
     {
-        set_nonblocking(_server_fd);
-    }
-    catch (...)
-    {
-        close(_server_fd);
-        _server_fd = -1;
-        throw;
+        int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (server_fd == -1)
+            throw std::runtime_error("Failed to create socket");
+        try
+        {
+            set_nonblocking(server_fd);
+        }
+        catch (...)
+        {
+            close(server_fd);
+            server_fd = -1;
+            throw;
+        }
+        _server_fds.push_back(server_fd);
     }
 }
 
 
 void Server::listen_socket()
 {
-    if (listen(_server_fd, 128) == -1)
-        throw std::runtime_error("Failed to listen on socket");
+    for (std::size_t i = 0; i < _server_fds.size(); ++i)
+    {
+        if (listen(_server_fds[i], 128) == -1)
+            throw std::runtime_error("Failed to listen on socket");
+    }
 }
 
 void Server::bind_socket()
 {
-    struct sockaddr_in address;
-
-    std::memset(&address, 0, sizeof(address));
-    address.sin_family = AF_INET;
-    address.sin_port = htons(_conf.port);
-    if (inet_pton(AF_INET, _conf.ip.c_str(), &address.sin_addr) != 1)
-        throw std::runtime_error("Invalid IPv4 address");
-    if (bind(_server_fd, reinterpret_cast<struct sockaddr *>(&address), sizeof(address)) == -1)
+    for (std::size_t i = 0; i < _server_fds.size(); ++i)
     {
-        throw std::runtime_error("Failed to bind socket");
+        struct sockaddr_in address;
+
+        std::memset(&address, 0, sizeof(address));
+        address.sin_family = AF_INET;
+        address.sin_port = htons(_conf.listens[i].port);
+        if (inet_pton(AF_INET,_conf.listens[i].ip.c_str(), &address.sin_addr) != 1)
+            throw std::runtime_error("Invalid IPv4 address");
+        if (bind(_server_fds[i], reinterpret_cast<struct sockaddr *>(&address), sizeof(address)) == -1)
+            throw std::runtime_error("Failed to bind socket");
     }
 }
 
-int Server::accept_connection()
+int Server::accept_connection(int server_fd)
 {
-    int client_fd = accept(_server_fd, NULL, NULL);
+    int client_fd = accept(server_fd, NULL, NULL);
 
     if (client_fd == -1)
     {
@@ -263,7 +271,7 @@ void Server::remove_client(int client_fd, std::vector<ClientConnection> &clients
 bool Server::handle_client_event(ClientConnection &client, HttpParser &parser)
 {
     char buffer[4096];
-
+    std::cout << "Reading from client: " << client.fd << std::endl;
     ssize_t bytes_read = read(client.fd, buffer, sizeof(buffer));
 
     if (bytes_read == 0)
@@ -335,11 +343,16 @@ void Server::run(HttpParser &parser)
     {
         std::vector<struct pollfd> fds;
 
-        struct pollfd server_poll;
-        server_poll.fd = _server_fd;
-        server_poll.events = POLLIN;
-        server_poll.revents = 0;
-        fds.push_back(server_poll);
+        for (std::size_t i = 0; i < _server_fds.size(); ++i)
+        {
+            struct pollfd server_poll;
+
+            server_poll.fd = _server_fds[i];
+            server_poll.events = POLLIN;
+            server_poll.revents = 0;
+
+            fds.push_back(server_poll);
+        }
 
         for (std::size_t i = 0; i < clients.size(); ++i)
         {
@@ -352,6 +365,15 @@ void Server::run(HttpParser &parser)
         }
 
         int result = poll(&fds[0], fds.size(), -1);
+        for (std::size_t i = 0; i < fds.size(); ++i)
+        {
+            if (fds[i].revents != 0)
+            {
+                std::cout << "fd: " << fds[i].fd
+                          << " events: " << fds[i].revents
+                          << std::endl;
+            }
+        }
 
         if (result == -1)
         {
@@ -359,15 +381,27 @@ void Server::run(HttpParser &parser)
                 continue;
             throw std::runtime_error("poll failed");
         }
-
-        if (fds[0].revents & POLLIN)
+        std::cout << "poll returned: " << result << std::endl;
+        for (std::size_t i = 0; i < _server_fds.size(); ++i)
         {
-            int client_fd = accept_connection();
-            if (client_fd != -1)
-                clients.push_back(ClientConnection(client_fd));
+            if (fds[i].revents & POLLIN)
+            {
+                int client_fd = accept_connection(_server_fds[i]);
+            
+                if (client_fd != -1)
+                {
+                    std::cout << "Accepted client: "
+                              << client_fd << std::endl;
+                
+                    clients.push_back(ClientConnection(client_fd));
+                }
+            }
+        
+            if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL))
+                throw std::runtime_error("Listening socket error");
         }
-
-        for (std::size_t i = 1; i < fds.size(); ++i)
+        
+        for (std::size_t i = _server_fds.size(); i < fds.size(); ++i)
         {
             int client_fd = fds[i].fd;
             short events = fds[i].revents;
@@ -383,7 +417,7 @@ void Server::run(HttpParser &parser)
             if (it == clients.end())
                 continue;
 
-            if (events & POLLNVAL)
+            if (events & (POLLNVAL | POLLHUP | POLLERR))
             {
                 remove_client(client_fd, clients);
                 continue;
@@ -409,6 +443,9 @@ void Server::run(HttpParser &parser)
 
 Server::~Server()
 {
-    if (_server_fd != -1)
-        close(_server_fd);
+    for (std::size_t i = 0; i < _server_fds.size(); ++i)
+    {
+        if (_server_fds[i] != -1)
+            close(_server_fds[i]);
+    }
 }

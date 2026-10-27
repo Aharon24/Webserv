@@ -46,7 +46,7 @@ struct ClientConnection
 class Server
 {
 private:
-    int _server_fd;
+    std::vector<int> _server_fds;
     ServerConfig _conf;
     const LocationConfig *find_location(const std::string &path) const;
     std::string build_file_path(const HttpRequest &request,const LocationConfig *location) const;
@@ -77,7 +77,7 @@ public:
     void create_socket();
     void bind_socket();
     void listen_socket();
-    int accept_connection();
+    int accept_connection(int server_fd);
     void send_all(int client_fd, const std::string &data);
 
 };
