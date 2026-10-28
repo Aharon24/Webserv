@@ -36,6 +36,9 @@ public:
     void parse_listen(ServerConfig &conf, bool &listen_defined);
     void parse_root(ServerConfig &conf, bool &root_defined);
     void parse_index(ServerConfig &conf, bool &index_defined);
+    void parse_server_name(ServerConfig &conf, bool &server_name_defined);
+
+    void warn_duplicate_listen_without_server_name(const std::vector<ServerConfig> &servers) const;
 
     bool is_valid_ipv4(const std::string &ip);
     bool is_valid_port(const std::string &port);

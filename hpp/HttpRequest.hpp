@@ -8,6 +8,7 @@ struct HttpRequest
     std::string method;
     std::string path;
     std::string version;
+    std::string host;
 };
 
 class HttpParser

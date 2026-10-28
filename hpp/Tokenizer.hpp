@@ -12,6 +12,7 @@ enum TokenType
     TOKEN_SERVER,       // "server"
     TOKEN_LOCATION,     // "location"
     TOKEN_LISTEN,
+    TOKEN_SERVER_NAME,
     TOKEN_ROOT,
     TOKEN_DIRECTIVE,    // "listen", "root", "index", "server_name", "error_page", "client_max_body_size" և այլն
     TOKEN_INDEX,

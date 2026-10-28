@@ -41,6 +41,49 @@ void Parser::print_tokens(void)
 }
 
 
+void Parser::warn_duplicate_listen_without_server_name(const std::vector<ServerConfig> &servers) const
+{
+    for (std::size_t i = 0; i < servers.size(); ++i)
+    {
+        for (std::size_t j = i + 1; j < servers.size(); ++j)
+        {
+            bool same_listen = false;
+            std::string shared_ip;
+            int shared_port = 0;
+
+            for (std::size_t a = 0; a < servers[i].listens.size() && !same_listen; ++a)
+            {
+                for (std::size_t b = 0; b < servers[j].listens.size(); ++b)
+                {
+                    if (servers[i].listens[a].ip == servers[j].listens[b].ip && servers[i].listens[a].port == servers[j].listens[b].port)
+                    {
+                        same_listen = true;
+                        shared_ip = servers[i].listens[a].ip;
+                        shared_port = servers[i].listens[a].port;
+                        break;
+                    }
+                }
+            }
+            if (same_listen && servers[i].server_name.empty() && servers[j].server_name.empty())
+            {
+                std::cerr << "WARNING: server blocks "
+                << i + 1 << " and " << j + 1 << " use the same listen address "
+                << shared_ip << ":" << shared_port << " without server_name."
+                << std::endl;
+            }
+            else if (same_listen && !servers[i].server_name.empty() && servers[i].server_name == servers[j].server_name)
+            {
+                std::cerr << "WARNING: duplicate server_name '"
+                << servers[i].server_name << "' in server blocks "
+                << i + 1 << " and " << j + 1 << " on "
+                << shared_ip << ":" << shared_port << "."
+                << std::endl;
+            }
+        }
+    }
+}
+
+
 std::vector<ServerConfig> Parser::start_parse()
 {
     _index = 0;
@@ -61,6 +104,7 @@ std::vector<ServerConfig> Parser::start_parse()
 
         servers.push_back(conf);
     }
+    warn_duplicate_listen_without_server_name(servers);
     return servers;
 }
 
@@ -280,6 +324,21 @@ void Parser::parse_location(ServerConfig &conf)
     conf.locations.push_back(location);
 }
 
+void Parser::parse_server_name(ServerConfig &conf, bool &server_name_defined)
+{
+    if(server_name_defined)
+        throw std::runtime_error("Duplicate 'server_name' directive");
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected hostname after 'server_name'");
+    conf.server_name = _tokens[_index].value;
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after 'server_name'");
+    ++_index;
+    server_name_defined = true;
+
+}
 
 void Parser::parse_server(ServerConfig &conf)
 {
@@ -290,12 +349,15 @@ void Parser::parse_server(ServerConfig &conf)
         throw std::runtime_error("Expected '{' after 'server'");
     ++_index;
     bool listen_defined = false;
+    bool server_name_defined = false;
     bool root_defined = false;
     bool index_defined = false;
     while (_index < _tokens.size() &&  _tokens[_index].type != TOKEN_RBRACE)
     {
         if (_tokens[_index].type == TOKEN_LISTEN)
             parse_listen(conf, listen_defined);
+        else if (_tokens[_index].type == TOKEN_SERVER_NAME)
+            parse_server_name(conf, server_name_defined);
         else if (_tokens[_index].type == TOKEN_ROOT)
             parse_root(conf, root_defined);
         else if (_tokens[_index].type == TOKEN_INDEX)

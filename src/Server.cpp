@@ -268,7 +268,7 @@ void Server::remove_client(int client_fd, std::vector<ClientConnection> &clients
 
 
 
-bool Server::handle_client_event(ClientConnection &client, HttpParser &parser)
+bool Server::handle_client_event(ClientConnection &client, HttpParser &http_parser)
 {
     char buffer[4096];
     std::cout << "Reading from client: " << client.fd << std::endl;
@@ -292,7 +292,7 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &parser)
 
     try
     {
-        HttpRequest request = parser.parse(client.request_buffer);
+        HttpRequest request = http_parser.parse(client.request_buffer);
 
         client.response_buffer = build_response(request);
         client.request_complete = true;

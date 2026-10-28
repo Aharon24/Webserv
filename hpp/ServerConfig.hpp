@@ -55,6 +55,7 @@ struct ServerConfig
 {
     std::string ip;
     int port;
+    std::string server_name;
 
     std::vector<ListenConfig> listens;
 
@@ -69,6 +70,7 @@ struct ServerConfig
     ServerConfig()
         : ip(""),
           port(0),
+          server_name(""),
           root(""),
           index("index.html"),
           client_max_body_size(1024 * 1024)

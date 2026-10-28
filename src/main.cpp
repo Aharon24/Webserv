@@ -10,8 +10,7 @@ void init_webserv(std::string &path)
     webserv web(path);
     Tokenizer Tok;
     Parser pars;
-    HttpParser parser;
-    HttpRequest request;
+    HttpParser Http_parser;
     std::vector<ServerConfig> configs;
 
 
@@ -45,7 +44,7 @@ void init_webserv(std::string &path)
 
         serv.bind_socket();
         serv.listen_socket();
-        serv.run(parser);
+        serv.run(Http_parser);
     }
     catch (const std::exception& e)
     {

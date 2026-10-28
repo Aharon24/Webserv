@@ -71,6 +71,7 @@ std::string Tokenizer::token_type_to_string(TokenType type) const
         case TOKEN_LBRACE:                 return "TOKEN_LBRACE";
         case TOKEN_RBRACE:                 return "TOKEN_RBRACE";
         case TOKEN_SEMICOLON:              return "TOKEN_SEMICOLON";
+        case TOKEN_SERVER_NAME:            return "TOKEN_SERVER_NAME";
         default:                           return "TOKEN_UNKNOWN";
     }
 }
@@ -101,7 +102,10 @@ void Tokenizer::add_token_word(std::string &word)
     } 
     else if (word == "root") {
         t.type = TOKEN_ROOT;
-    } 
+    }
+    else if (word == "server_name") {
+    t.type = TOKEN_SERVER_NAME;
+    }
     else if (word == "index") {
         t.type = TOKEN_INDEX;
     } 
