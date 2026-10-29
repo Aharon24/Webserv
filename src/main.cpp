@@ -38,7 +38,7 @@ void init_webserv(std::string &path)
             std::cout << "Root: " << configs[i].root << std::endl;
             std::cout << "Index: " << configs[i].index << std::endl;
         }
-        Server serv(configs[0]);
+        Server serv(configs);
         serv.create_socket();
         std::cout << "Socket created successfully" << std::endl;
 

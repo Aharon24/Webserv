@@ -1,9 +1,12 @@
 #include "Server.hpp"
 
 
-Server::Server(const ServerConfig &conf)
-    :  _conf(conf)
+Server::Server(const std::vector<ServerConfig> &configs) : _configs(configs), _conf()
 {
+    if (_configs.empty())
+        throw std::runtime_error("No server configurations");
+
+    _conf = _configs[0];
 }
 
 void Server::set_nonblocking(int fd)
@@ -24,6 +27,12 @@ void Server::create_socket()
         int server_fd = socket(AF_INET, SOCK_STREAM, 0);
         if (server_fd == -1)
             throw std::runtime_error("Failed to create socket");
+        int reuse = 1;
+        if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == -1)
+        {
+            close(server_fd);
+            throw std::runtime_error("Failed to set SO_REUSEADDR");
+        }
         try
         {
             set_nonblocking(server_fd);
@@ -293,8 +302,28 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
     try
     {
         HttpRequest request = http_parser.parse(client.request_buffer);
+        std::cout << "===== HTTP REQUEST =====" << std::endl;
+        std::cout << "Method:  " << request.method << std::endl;
+        std::cout << "Path:    " << request.path << std::endl;
+        std::cout << "Version: " << request.version << std::endl;
+        std::cout << "Host:    " << request.host << std::endl;
+        std::cout << "========================" << std::endl;
+        const ServerConfig *selected_config = find_server_config(request.host);
+        if (selected_config == NULL)
+        {
+            std::string status = "404 Not Found";
+            std::string body = "Unknown Host: " + request.host + "\n";
+        
+            client.response_buffer = create_response_data(request, status, body) + body;
+            std::cout << "Unknown Host: " << request.host << std::endl;
+        }
+        else
+        {
+            _conf = *selected_config;
+            std::cout << "Selected server_name: " << _conf.server_name << std::endl;
 
-        client.response_buffer = build_response(request);
+            client.response_buffer = build_response(request);
+        }
         client.request_complete = true;
         client.response_ready = true;
     }
@@ -333,6 +362,37 @@ bool Server::handle_client_write(ClientConnection &client)
     client.sent_bytes += static_cast<std::size_t>(bytes_sent);
 
     return client.sent_bytes < client.response_buffer.size();
+}
+
+const ServerConfig *Server::find_server_config(const std::string &host) const
+{
+    if (_configs.empty())
+        return NULL;
+    
+    std::string host_name = host;
+
+    std::string::size_type colon = host_name.find(':');
+    if (colon != std::string::npos)
+        host_name.erase(colon);
+    for (std::size_t i = 0; i < host_name.size(); ++i)
+    {
+        host_name[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(host_name[i])));
+    }
+    for (std::size_t i = 0; i < _configs.size(); ++i)
+    {
+        if (_configs[i].server_name.empty())
+            continue;
+
+        std::string configured_name = _configs[i].server_name;
+
+        for (std::size_t j = 0; j < configured_name.size(); ++j)
+        {
+            configured_name[j] = static_cast<char>(std::tolower(static_cast<unsigned char>(configured_name[j])));
+        }
+        if (configured_name == host_name)
+            return &_configs[i];
+    }
+    return  NULL;
 }
 
 void Server::run(HttpParser &parser)

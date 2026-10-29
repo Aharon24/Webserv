@@ -47,17 +47,21 @@ class Server
 {
 private:
     std::vector<int> _server_fds;
+    std::vector<ServerConfig> _configs;
     ServerConfig _conf;
+
+
     const LocationConfig *find_location(const std::string &path) const;
     std::string build_file_path(const HttpRequest &request,const LocationConfig *location) const;
     Server(const Server &other);
     Server &operator=(const Server &other);
     void set_nonblocking(int fd);
     std::string build_response(const HttpRequest &request);
+    const ServerConfig *find_server_config(const std::string &host) const;
 
 
 public:
-    Server(const ServerConfig &conf);
+    Server(const std::vector<ServerConfig> &configs);
     ~Server();
 
     // GET POST DELTETE

@@ -15,6 +15,7 @@ class HttpParser
 {
 public:
     HttpRequest parse(const std::string &raw_request);
+    void parse_head_host(const std::string &line, HttpRequest &request, bool &host_found);
 };
 
 #endif
