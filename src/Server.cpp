@@ -7,6 +7,26 @@ Server::Server(const std::vector<ServerConfig> &configs) : _configs(configs), _c
         throw std::runtime_error("No server configurations");
 
     _conf = _configs[0];
+    for (std::size_t i = 0; i < _configs.size(); ++i)
+    {
+        for (std::size_t j = 0; j < _configs[i].listens.size(); ++j)
+        {
+            bool found = false;
+
+            for (std::size_t k = 0; k < _listens.size(); ++k)
+            {
+                if (_listens[k].ip == _configs[i].listens[j].ip &&
+                    _listens[k].port == _configs[i].listens[j].port)
+                {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found)
+                _listens.push_back(_configs[i].listens[j]);
+        }
+    }
 }
 
 void Server::set_nonblocking(int fd)
@@ -22,7 +42,7 @@ void Server::set_nonblocking(int fd)
 
 void Server::create_socket()
 {
-    for (std::size_t i = 0; i < _conf.listens.size(); ++i)
+    for (std::size_t i = 0; i < _listens.size(); ++i)
     {
         int server_fd = socket(AF_INET, SOCK_STREAM, 0);
         if (server_fd == -1)
@@ -65,8 +85,8 @@ void Server::bind_socket()
 
         std::memset(&address, 0, sizeof(address));
         address.sin_family = AF_INET;
-        address.sin_port = htons(_conf.listens[i].port);
-        if (inet_pton(AF_INET,_conf.listens[i].ip.c_str(), &address.sin_addr) != 1)
+        address.sin_port = htons(_listens[i].port);
+        if (inet_pton(AF_INET,_listens[i].ip.c_str(), &address.sin_addr) != 1)
             throw std::runtime_error("Invalid IPv4 address");
         if (bind(_server_fds[i], reinterpret_cast<struct sockaddr *>(&address), sizeof(address)) == -1)
             throw std::runtime_error("Failed to bind socket");

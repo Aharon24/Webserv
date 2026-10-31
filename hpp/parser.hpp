@@ -40,6 +40,9 @@ public:
 
     void warn_duplicate_listen_without_server_name(const std::vector<ServerConfig> &servers) const;
 
+
+    void check_location(const ServerConfig &conf) const;
+
     bool is_valid_ipv4(const std::string &ip);
     bool is_valid_port(const std::string &port);
 

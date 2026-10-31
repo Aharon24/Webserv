@@ -240,21 +240,42 @@ void Parser::parse_listen(ServerConfig &conf, bool &listen_defined)
     std::cout << "Listen port: " << port << std::endl;
 }
 
+
+void Parser::check_location(const ServerConfig &conf) const
+{
+    struct stat info;
+    for(size_t i = 0; i < conf.locations.size(); ++i)
+    {
+        const std::string &root = conf.locations[i].root;
+        if (root.empty())
+                throw std::runtime_error("Missing root for location: " + conf.locations[i].path);
+        if (stat(root.c_str(), &info) != 0)
+            throw std::runtime_error("Cannot access location root: " + root);
+
+        if (!S_ISDIR(info.st_mode))
+            throw std::runtime_error("Location root is not a directory: " + root);
+
+        if (access(root.c_str(), R_OK | X_OK) != 0)
+            throw std::runtime_error("Location root is not accessible: " + root);
+    }
+}
+
 void Parser::validate_root(const ServerConfig &conf) const
 {
-    if (conf.root.empty())
-        throw std::runtime_error("Missing required directive: root");
-
     struct stat info;
 
-    if (stat(conf.root.c_str(), &info) != 0)
-        throw std::runtime_error("Cannot access root path");
+    if (!conf.root.empty())
+    {
+        if (stat(conf.root.c_str(), &info) != 0)
+            throw std::runtime_error("Cannot access root path");
 
-    if (!S_ISDIR(info.st_mode))
-        throw std::runtime_error("Root path is not a directory");
+        if (!S_ISDIR(info.st_mode))
+            throw std::runtime_error("Root path is not a directory");
 
-    if (access(conf.root.c_str(), R_OK | X_OK) != 0)
-        throw std::runtime_error("Root directory is not accessible");
+        if (access(conf.root.c_str(), R_OK | X_OK) != 0)
+            throw std::runtime_error("Root directory is not accessible");
+    }
+    check_location(conf);
 }
 
 
@@ -373,6 +394,11 @@ void Parser::parse_server(ServerConfig &conf)
     ++_index;
     if (!listen_defined)
         throw std::runtime_error("Missing required directive: listen");
+    for (std::size_t i = 0; i < conf.locations.size(); ++i)
+    {
+        if (conf.locations[i].root.empty())
+            conf.locations[i].root = conf.root;
+    }
 }
 
 
