@@ -37,6 +37,7 @@ public:
     void parse_root(ServerConfig &conf, bool &root_defined);
     void parse_index(ServerConfig &conf, bool &index_defined);
     void parse_server_name(ServerConfig &conf, bool &server_name_defined);
+    void parse_error_page(ServerConfig &conf);
 
 
 
@@ -49,11 +50,13 @@ public:
 
 // Location
     void parse_location(ServerConfig &conf);
+    void parse_location_directives(LocationConfig &location);
     void parse_location_root(LocationConfig &location);
     void parse_location_index(LocationConfig &location);
     void check_location(const ServerConfig &conf) const;
     void validate_root(const ServerConfig &conf) const;
     void parse_location_allowed_methods(LocationConfig &location);
+    void parse_location_return(LocationConfig &location);
 };
 
 #endif

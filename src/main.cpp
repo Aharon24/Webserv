@@ -26,7 +26,33 @@ void init_webserv(std::string &path)
         pars.set_token(Tok.get_token());
 
         configs =  pars.start_parse();
-
+        for (std::size_t i = 0; i < configs.size(); ++i)
+        {
+            std::cout << "\n===== SERVER " << i + 1 << " =====\n";
+        
+            for (std::map<int, std::string>::const_iterator it =
+                    configs[i].error_pages.begin();
+                 it != configs[i].error_pages.end(); ++it)
+            {
+                std::cout << "Error code: " << it->first
+                          << " | Page: " << it->second << std::endl;
+            }
+        }
+        for (std::size_t i = 0; i < configs.size(); ++i)
+        {
+            std::cout << "\n===== SERVER " << i + 1 << " =====" << std::endl;
+        
+            for (std::size_t j = 0; j < configs[i].locations.size(); ++j)
+            {
+                const LocationConfig &loc = configs[i].locations[j];
+            
+                std::cout << "Location: " << loc.path << std::endl;
+                std::cout << "Return code: " << loc.return_code << std::endl;
+                std::cout << "Return URL: " << loc.return_url << std::endl;
+                std::cout << "Root: " << loc.root << std::endl;
+                std::cout << "Index: " << loc.index << std::endl;
+            }
+        }
         for (std::size_t i = 0; i < configs.size(); ++i)
             pars.validate_root(configs[i]);
 

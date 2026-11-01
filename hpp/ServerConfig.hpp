@@ -57,15 +57,21 @@ struct ServerConfig
     int port;
     std::string server_name;
 
-    std::vector<ListenConfig> listens;
 
+
+
+
+    
+    std::vector<ListenConfig> listens;
+    
     std::string root;
     std::string index;
-
+    
     std::size_t client_max_body_size;
     std::map<int, std::string> error_pages;
-
+    
     std::vector<LocationConfig> locations;
+    int return_code;
 
     ServerConfig()
         : ip(""),

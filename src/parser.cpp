@@ -310,21 +310,37 @@ void Parser::parse_location_allowed_methods(LocationConfig &location)
     ++_index;
 }
 
-
-void Parser::parse_location(ServerConfig &conf)
+void Parser::parse_location_return(LocationConfig &location)
 {
-    LocationConfig location;
+    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected return status code ");
+
+    const std::string code = _tokens[_index].value;
+    
+    if(code != "301" && code != "302" && code != "303" && code != "307" && code != "308")
+        throw std::runtime_error("Only return 301,302 303, 307, 308 is supported -> " + code);
+    
+    location.return_code = std::atoi(code.c_str());
+    ++_index;
+    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected return URL");
+    
+    location.return_url = _tokens[_index].value;
+    ++_index;
+    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';'  after return");
+    ++_index;
+
+    std::cout << "return code -> " << location.return_code << "\n";
+    std::cout << "return URL -> " << location.return_url  << "\n";
+}
+
+void Parser::parse_location_directives(LocationConfig &location)
+{
     bool root_defined = false;
     bool index_defined = false;
     bool methods_defined = false;
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected path after 'location'");
-    location.path = _tokens[_index].value;
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_LBRACE)
-        throw std::runtime_error("Expected '{' after location path");
-    ++_index;
+    bool return_defined = false;
     while (_index < _tokens.size() && _tokens[_index].type != TOKEN_RBRACE)
     {
         if (_tokens[_index].type == TOKEN_ROOT)
@@ -351,10 +367,33 @@ void Parser::parse_location(ServerConfig &conf)
             parse_location_allowed_methods(location);
             methods_defined = true;
         }
+        else if(_tokens[_index].type == TOKEN_RETURN)
+        {
+            if(return_defined)
+                throw std::runtime_error("Duplicate 'return' directives in location");
+            ++_index;
+            parse_location_return(location);
+            return_defined = true;
+        }
         else
             throw std::runtime_error("Unknown directive inside location: '" + _tokens[_index].value + "'");
     }
-    if (_index >= _tokens.size())
+}
+
+
+void Parser::parse_location(ServerConfig &conf)
+{
+    LocationConfig location;
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected path after 'location'");
+    location.path = _tokens[_index].value;
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_LBRACE)
+        throw std::runtime_error("Expected '{' after location path");
+    ++_index;
+    parse_location_directives(location);
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_RBRACE)
         throw std::runtime_error("Unexpected end of file: expected '}' after location");
     ++_index;
     conf.locations.push_back(location);
@@ -375,6 +414,40 @@ void Parser::parse_server_name(ServerConfig &conf, bool &server_name_defined)
     server_name_defined = true;
 
 }
+
+void Parser::parse_error_page(ServerConfig &conf)
+{
+    ++_index;
+
+    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected HTTP error code after 'error_page'");
+    const std::string code = _tokens[_index].value;
+
+    if(code.size() != 3 || code[0] < '0' || code[0] > '9' || code[1] > '9' || code[1] < '0' || code[2] < '0' || code[2] > '9')
+        throw std::runtime_error("Invalid HTTP error code");
+
+    int status_code = std::atoi(code.c_str());
+
+    if(status_code < 400 || status_code > 599)
+        throw std::runtime_error("HTTP error code must be between 400 and 599");
+    if(conf.error_pages.find(status_code) != conf.error_pages.end())
+        throw std::runtime_error("Duplicate error_page status code");
+    ++_index;
+    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected HTTP error page URL");
+
+    const std::string path = _tokens[_index].value;
+
+    if(path.empty() || path[0] != '/')
+        throw std::runtime_error("Error page URI must start with '/'");
+    ++_index;
+
+    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after error_page");
+    ++_index;
+    conf.error_pages[status_code] = path;
+}
+
 
 void Parser::parse_server(ServerConfig &conf)
 {
@@ -400,6 +473,8 @@ void Parser::parse_server(ServerConfig &conf)
             parse_index(conf, index_defined);
         else if (_tokens[_index].type == TOKEN_LOCATION)
             parse_location(conf);
+        else if(_tokens[_index].type == TOKEN_ERROR_PAGE)
+            parse_error_page(conf);
         else
             throw std::runtime_error("Unknown directive inside server");
     }
