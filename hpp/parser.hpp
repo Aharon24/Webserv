@@ -39,7 +39,9 @@ public:
     void parse_server_name(ServerConfig &conf, bool &server_name_defined);
     void parse_error_page(ServerConfig &conf);
 
-
+    void parse_client_max_body_size(ServerConfig &conf, bool &defined);
+    void bit_size(const std::string &suffix, std::size_t &multiplier);
+    void get_number_multiplayer(onst std::string &number_part, std::size_t &nuber);
 
     void warn_duplicate_listen_without_server_name(const std::vector<ServerConfig> &servers) const;
 

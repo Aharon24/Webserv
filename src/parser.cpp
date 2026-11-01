@@ -449,6 +449,71 @@ void Parser::parse_error_page(ServerConfig &conf)
 }
 
 
+void Parser::bit_size(const std::string &suffix, std::size_t & multiplier)
+{ 
+    if (suffix.empty())
+    multiplier = 1;
+    else if (suffix == "K" || suffix == "k")
+        multiplier = 1024;
+    else if (suffix == "M" || suffix == "m")
+        multiplier = 1024 * 1024;
+    else if (suffix == "G" || suffix == "g")
+        multiplier = 1024 * 1024 * 1024;
+    else
+        throw std::runtime_error("Invalid size suffix");
+}
+
+void Parser::get_number_multiplayer( const std::string &number_part, std::size_t &nuber)
+{
+    const std::size_t max_size = std::numeric_limits<std::size_t>::max();
+
+    for (std::string::size_type i = 0; i < number_part.size(); ++i)
+    {
+        int digit = number_part[i] - '0';
+
+        if (number > (max_size - digit) / 10)
+            throw std::runtime_error("client_max_body_size overflow");
+
+        number = number * 10 + digit;
+    }
+}
+
+void Parser::parse_client_max_body_size(ServerConfig &conf, bool &defined)
+{
+    if (defined)
+        throw std::runtime_error("Duplicate 'client_max_body_size' directive");
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected size after 'client_max_body_size'");
+
+    const std::string value = _tokens[_index].value;
+    std::string::size_type pos = 0;
+
+    while(pos < value.size() && value[pos] >= '0'&& value[pos] <= '9')
+        ++pos;
+    if(pos == 0)
+        throw std::runtime_error("Invalid client_max_body_size value");
+    std::string number_part = value.substr(0, pos);
+    std::string suffix = value.substr(pos);
+    std::size_t multiplier = 1;
+    std::size_t number = 0;
+    bit_size(suffix, multiplier);
+
+    get_number_multiplayer(number_part, number);
+
+    if (number > std::numeric_limits<std::size_t>::max() / multiplier)
+        throw std::runtime_error("client_max_body_size overflow");
+
+    std::size_t size = number * multiplier;
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after client_max_body_size");
+    ++_index;
+
+    conf.client_max_body_size = size;
+    defined = true;
+}
+
 void Parser::parse_server(ServerConfig &conf)
 {
     if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SERVER)
@@ -461,6 +526,7 @@ void Parser::parse_server(ServerConfig &conf)
     bool server_name_defined = false;
     bool root_defined = false;
     bool index_defined = false;
+    bool client_max_body_size_defined = false;
     while (_index < _tokens.size() &&  _tokens[_index].type != TOKEN_RBRACE)
     {
         if (_tokens[_index].type == TOKEN_LISTEN)
@@ -475,6 +541,8 @@ void Parser::parse_server(ServerConfig &conf)
             parse_location(conf);
         else if(_tokens[_index].type == TOKEN_ERROR_PAGE)
             parse_error_page(conf);
+        else if (_tokens[_index].type == TOKEN_CLIENT_MAX_BODY_SIZE)
+            parse_client_max_body_size(conf, client_max_body_size_defined);
         else
             throw std::runtime_error("Unknown directive inside server");
     }
@@ -490,6 +558,7 @@ void Parser::parse_server(ServerConfig &conf)
             conf.locations[i].root = conf.root;
     }
 }
+
 
 std::vector<ServerConfig> Parser::start_parse()
 {
