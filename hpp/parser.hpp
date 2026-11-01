@@ -38,19 +38,22 @@ public:
     void parse_index(ServerConfig &conf, bool &index_defined);
     void parse_server_name(ServerConfig &conf, bool &server_name_defined);
 
+
+
     void warn_duplicate_listen_without_server_name(const std::vector<ServerConfig> &servers) const;
 
 
-    void check_location(const ServerConfig &conf) const;
-
+// listen
     bool is_valid_ipv4(const std::string &ip);
     bool is_valid_port(const std::string &port);
 
-    void validate_root(const ServerConfig &conf) const;
-
+// Location
     void parse_location(ServerConfig &conf);
     void parse_location_root(LocationConfig &location);
-    void parse_location_index(LocationConfig &location);        
+    void parse_location_index(LocationConfig &location);
+    void check_location(const ServerConfig &conf) const;
+    void validate_root(const ServerConfig &conf) const;
+    void parse_location_allowed_methods(LocationConfig &location);
 };
 
 #endif

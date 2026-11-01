@@ -84,29 +84,6 @@ void Parser::warn_duplicate_listen_without_server_name(const std::vector<ServerC
 }
 
 
-std::vector<ServerConfig> Parser::start_parse()
-{
-    _index = 0;
-    std::vector<ServerConfig> servers;
-    if (_tokens.empty())
-        throw std::runtime_error("Config file is empty");
-
-
-    while (_index < _tokens.size())
-    {
-        if (_tokens[_index].type != TOKEN_SERVER)
-            throw std::runtime_error(
-                "Expected 'server' at the beginning of server block"
-            );
-
-        ServerConfig conf;
-        parse_server(conf);
-
-        servers.push_back(conf);
-    }
-    warn_duplicate_listen_without_server_name(servers);
-    return servers;
-}
 
 
 void Parser::parse_root(ServerConfig &conf, bool &root_defined)
@@ -304,12 +281,42 @@ void Parser::parse_location_index(LocationConfig &location)
 }
 
 
+void Parser::parse_location_allowed_methods(LocationConfig &location)
+{
+    bool methood_found = false;
+    std::string  method;
+    while(_index < _tokens.size() && _tokens[_index].type != TOKEN_SEMICOLON)
+    {
+        if(_tokens[_index].type != TOKEN_ARGUMENT)
+            throw std::runtime_error("Expected HTTP method");
+        
+        method = _tokens[_index].value;
+        if(method != "GET" && method != "POST" && method != "DELETE")
+            throw std::runtime_error("Invalid method HTTP");
+
+        for(std::size_t i = 0; i < location.allowed_methods.size(); ++i)
+        {
+            if(location.allowed_methods[i] == method)
+                throw std::runtime_error("Duplicate HTTP method" + method);
+        }
+        location.allowed_methods.push_back(method);
+        methood_found = true;
+        ++_index;
+    }
+    if(!methood_found)
+        throw std::runtime_error("AT least one HTTP methood is required");
+    if(_index >= _tokens.size()  || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after allowed_methods");
+    ++_index;
+}
+
 
 void Parser::parse_location(ServerConfig &conf)
 {
     LocationConfig location;
     bool root_defined = false;
     bool index_defined = false;
+    bool methods_defined = false;
     ++_index;
     if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
         throw std::runtime_error("Expected path after 'location'");
@@ -335,6 +342,14 @@ void Parser::parse_location(ServerConfig &conf)
             ++_index;
             parse_location_index(location);
             index_defined = true; 
+        }
+        else if (_tokens[_index].type == TOKEN_ALLOWED_METHODS)
+        {
+            if(methods_defined)
+                throw std::runtime_error("Duplicate 'allowed_methods' ");
+            ++_index;
+            parse_location_allowed_methods(location);
+            methods_defined = true;
         }
         else
             throw std::runtime_error("Unknown directive inside location: '" + _tokens[_index].value + "'");
@@ -401,6 +416,29 @@ void Parser::parse_server(ServerConfig &conf)
     }
 }
 
+std::vector<ServerConfig> Parser::start_parse()
+{
+    _index = 0;
+    std::vector<ServerConfig> servers;
+    if (_tokens.empty())
+        throw std::runtime_error("Config file is empty");
+
+
+    while (_index < _tokens.size())
+    {
+        if (_tokens[_index].type != TOKEN_SERVER)
+            throw std::runtime_error(
+                "Expected 'server' at the beginning of server block"
+            );
+
+        ServerConfig conf;
+        parse_server(conf);
+
+        servers.push_back(conf);
+    }
+    warn_duplicate_listen_without_server_name(servers);
+    return servers;
+}
 
 Parser::~Parser()
 {
