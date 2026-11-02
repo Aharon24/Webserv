@@ -335,12 +335,45 @@ void Parser::parse_location_return(LocationConfig &location)
     std::cout << "return URL -> " << location.return_url  << "\n";
 }
 
+
+void Parser::parse_location_upload(LocationConfig &location)
+{
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected 'on' or 'off' after upload");
+    
+    const std::string value = _tokens[_index].value;
+
+    if (value == "on")
+        location.upload_enabled = true;
+    else if (value == "off")
+        location.upload_enabled = false;
+    else
+        throw std::runtime_error("Invalid upload value: " + value);
+
+    ++_index;
+
+    if (_index >= _tokens.size() ||
+        _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after upload");
+
+    ++_index;
+
+}
+
+void parse_location_upload_path(LocationConfig &location)
+{
+
+}
+
 void Parser::parse_location_directives(LocationConfig &location)
 {
     bool root_defined = false;
     bool index_defined = false;
     bool methods_defined = false;
     bool return_defined = false;
+    bool autoindex_defined = false;
+    bool upload_defined = false;
+    bool upload_path_defined = false;
     while (_index < _tokens.size() && _tokens[_index].type != TOKEN_RBRACE)
     {
         if (_tokens[_index].type == TOKEN_ROOT)
@@ -374,6 +407,32 @@ void Parser::parse_location_directives(LocationConfig &location)
             ++_index;
             parse_location_return(location);
             return_defined = true;
+        }
+        else if (_tokens[_index].type == TOKEN_AUTOINDEX)
+        {
+            if (autoindex_defined)
+                throw std::runtime_error("Duplicate 'autoindex' directive");
+        
+            ++_index;
+            parse_location_autoindex(location);
+            autoindex_defined = true;
+        }
+        else if (_tokens[_index].type == TOKEN_UPLOAD)
+        {
+            if (upload_defined)
+                throw std::runtime_error("Duplicate 'upload' directive");
+            ++_index;
+            parse_location_upload(location);
+            upload_defined = true;
+        }
+        else if(_tokens[_index].type == TOKEN_UPLOAD_PATH)
+        {
+            if (upload_path_defined)
+                throw std::runtime_error("Duplicate 'upload_path' directive");
+                
+            ++_index;
+            parse_location_upload_path(location);
+            upload_path_defined = true;
         }
         else
             throw std::runtime_error("Unknown directive inside location: '" + _tokens[_index].value + "'");
@@ -463,7 +522,7 @@ void Parser::bit_size(const std::string &suffix, std::size_t & multiplier)
         throw std::runtime_error("Invalid size suffix");
 }
 
-void Parser::get_number_multiplayer( const std::string &number_part, std::size_t &nuber)
+void Parser::get_number_multiplayer( const std::string &number_part, std::size_t &number)
 {
     const std::size_t max_size = std::numeric_limits<std::size_t>::max();
 
@@ -512,6 +571,26 @@ void Parser::parse_client_max_body_size(ServerConfig &conf, bool &defined)
 
     conf.client_max_body_size = size;
     defined = true;
+}
+
+
+void Parser::parse_location_autoindex(LocationConfig &location)
+{
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected 'on' or 'off' after autoindex");
+    
+    const std::string value = _tokens[_index].value;
+
+    if(value == "on")
+        location.autoindex = true;
+    else if (value == "off")
+        location.autoindex = false;
+    else
+        throw std::runtime_error("Invalid autoindex value: " + value);
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after autoindex");
+    ++_index;
 }
 
 void Parser::parse_server(ServerConfig &conf)

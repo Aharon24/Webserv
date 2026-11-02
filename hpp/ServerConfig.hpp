@@ -27,7 +27,6 @@ struct LocationConfig
     std::string path;
     std::string root;
     std::string index;
-
     std::vector<std::string> allowed_methods;
 
     int return_code;
