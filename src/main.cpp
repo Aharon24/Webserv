@@ -52,7 +52,8 @@ void init_webserv(std::string &path)
                 std::cout << "Root: " << loc.root << std::endl;
                 std::cout << "Index: " << loc.index << std::endl;
                 std::cout << "autoindex: " << loc.autoindex << std::endl;
-                std::cout << "up pload: " << loc.upload_enabled << std::endl;
+                std::cout << "uppload: " << loc.upload_enabled << std::endl;
+                std::cout << "upload_path: " << loc.upload_path << std::endl;
                 std::cout << "Max body size: " << configs[i].client_max_body_size << " bytes" << std::endl;
             }
         }

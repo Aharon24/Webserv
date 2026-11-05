@@ -360,9 +360,19 @@ void Parser::parse_location_upload(LocationConfig &location)
 
 }
 
-void parse_location_upload_path(LocationConfig &location)
+void Parser::parse_location_upload_path(LocationConfig &location)
 {
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected path after 'upload_path'");
 
+    const std::string path = _tokens[_index].value;
+    if (path.empty())
+        throw std::runtime_error("Upload path cannot be empty");
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after upload_path");
+    ++_index;
+    location.upload_path = path;
 }
 
 void Parser::parse_location_directives(LocationConfig &location)

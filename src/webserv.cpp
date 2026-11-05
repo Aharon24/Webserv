@@ -48,19 +48,7 @@ void webserv::take_path()
     this->check_path(this->_config_path);
 }
 
-//old 
 
-// void webserv::take_path()
-// {
-//     if(this->_config_path == "")
-//     {
-//         this->_config_path = "config/default.conf";
-//         this->_conf.set_path("config/default.conf");
-//     }
-//     else
-//         this->_conf.set_path(this->_config_path);
-//     this->check_path(this->_config_path);
-// }
 
 std::string webserv::get_path()
 {
