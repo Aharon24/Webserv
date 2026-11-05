@@ -55,34 +55,45 @@ void init_webserv(std::string &path)
                 std::cout << "uppload: " << loc.upload_enabled << std::endl;
                 std::cout << "upload_path: " << loc.upload_path << std::endl;
                 std::cout << "Max body size: " << configs[i].client_max_body_size << " bytes" << std::endl;
-            }
-        }
-        for (std::size_t i = 0; i < configs.size(); ++i)
-            pars.validate_root(configs[i]);
+                    std::cout << "CGI count: " << loc.cgi.size() << std::endl;
 
-        for (std::size_t i = 0; i < configs.size(); ++i)
-        {
-            std::cout << "\nServer " << i + 1 << std::endl;
-            std::cout << "IP: " << configs[i].ip << std::endl;
-            std::cout << "Port: " << configs[i].port << std::endl;
-            std::cout << "Root: " << configs[i].root << std::endl;
-            std::cout << "Index: " << configs[i].index << std::endl;
+                for (std::size_t k = 0; k < loc.cgi.size(); ++k)
+                {
+                    std::cout << "CGI extension: "
+                              << loc.cgi[k].extension << std::endl;
+                
+                    std::cout << "CGI interpreter: "
+                              << loc.cgi[k].interpreter << std::endl;
+                }
+            }
+        
+            for (std::size_t i = 0; i < configs.size(); ++i)
+                pars.validate_root(configs[i]);
+
+            for (std::size_t i = 0; i < configs.size(); ++i)
+            {
+                std::cout << "\nServer " << i + 1 << std::endl;
+                std::cout << "IP: " << configs[i].ip << std::endl;
+                std::cout << "Port: " << configs[i].port << std::endl;
+                std::cout << "Root: " << configs[i].root << std::endl;
+                std::cout << "Index: " << configs[i].index << std::endl;
+            }
         }
         Server serv(configs);
         serv.create_socket();
         std::cout << "Socket created successfully" << std::endl;
-
+    
         serv.bind_socket();
         serv.listen_socket();
-        serv.run(Http_parser);
+        serv.run(Http_parser);  
     }
     catch (const std::exception& e)
     {
         std::cerr << "Config error: " << e.what() << std::endl;
         return ;
     }
-
 }
+   
 
 int main(int argc, char *argv[])
 {

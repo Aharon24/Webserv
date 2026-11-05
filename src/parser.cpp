@@ -352,8 +352,7 @@ void Parser::parse_location_upload(LocationConfig &location)
 
     ++_index;
 
-    if (_index >= _tokens.size() ||
-        _tokens[_index].type != TOKEN_SEMICOLON)
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
         throw std::runtime_error("Expected ';' after upload");
 
     ++_index;
@@ -373,6 +372,38 @@ void Parser::parse_location_upload_path(LocationConfig &location)
         throw std::runtime_error("Expected ';' after upload_path");
     ++_index;
     location.upload_path = path;
+}
+
+
+void Parser::parse_location_cgi(LocationConfig &location)
+{
+
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected CGI extension");
+    const std::string ext = _tokens[_index].value;
+    if (ext.size() < 2 || ext[0] != '.' || ext.find('/') != std::string::npos || ext.find('\\') != std::string::npos)
+        throw std::runtime_error("Invalid CGI extension");
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected CGI interpreter");
+    const std::string interpreter = _tokens[_index].value;
+    if (interpreter.empty())
+        throw std::runtime_error("CGI interpreter cannot be empty");
+    for (std::size_t i = 0; i < location.cgi.size(); ++i)
+    {
+        if (location.cgi[i].extension == ext)
+            throw std::runtime_error("Duplicate CGI extension: " + ext);
+    }
+    ++_index;
+
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after cgi");
+    ++_index;
+    CgiConfig config;
+    config.extension = ext;
+    config.interpreter = interpreter;
+
+    location.cgi.push_back(config);
 }
 
 void Parser::parse_location_directives(LocationConfig &location)
@@ -444,9 +475,17 @@ void Parser::parse_location_directives(LocationConfig &location)
             parse_location_upload_path(location);
             upload_path_defined = true;
         }
+        else if (_tokens[_index].type == TOKEN_CGI)
+        {
+            ++_index;
+            parse_location_cgi(location);
+        }
+        
         else
             throw std::runtime_error("Unknown directive inside location: '" + _tokens[_index].value + "'");
     }
+    if (location.upload_enabled && location.upload_path.empty())
+        throw std::runtime_error("'upload on' requires 'upload_path'");
 }
 
 
@@ -457,6 +496,12 @@ void Parser::parse_location(ServerConfig &conf)
     if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
         throw std::runtime_error("Expected path after 'location'");
     location.path = _tokens[_index].value;
+    for (std::size_t i = 0; i < conf.locations.size(); ++i)
+    {
+        if (conf.locations[i].path == location.path)
+            throw std::runtime_error(
+                "Duplicate location: " + location.path);
+    }
     ++_index;
     if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_LBRACE)
         throw std::runtime_error("Expected '{' after location path");

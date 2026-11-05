@@ -63,6 +63,7 @@ public:
     void parse_location_autoindex(LocationConfig &location);
     void parse_location_upload(LocationConfig &location);
     void parse_location_upload_path(LocationConfig &location);
+    void parse_location_cgi(LocationConfig &location);
 };
 
 #endif
