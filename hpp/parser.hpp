@@ -64,6 +64,11 @@ public:
     void parse_location_upload(LocationConfig &location);
     void parse_location_upload_path(LocationConfig &location);
     void parse_location_cgi(LocationConfig &location);
+
+
+//  check file and path 
+    void validate_directory(const std::string &path, const std::string &name, int permissions) const;
+    void validate_executable(const std::string &path, const std::string &name) const;
 };
 
 #endif
