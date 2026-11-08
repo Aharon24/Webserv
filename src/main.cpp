@@ -5,6 +5,60 @@
 
 
 
+
+void print_conf(const std::vector<ServerConfig> &configs)
+{
+    for (std::size_t i = 0; i < configs.size(); ++i)
+    {
+        std::cout << "\n===== SERVER " << i + 1 << " =====\n";
+    
+        for (std::map<int, std::string>::const_iterator it =
+                configs[i].error_pages.begin();
+             it != configs[i].error_pages.end(); ++it)
+        {
+            std::cout << "Error code: " << it->first
+                      << " | Page: " << it->second << std::endl;
+        }
+    }
+    for (std::size_t i = 0; i < configs.size(); ++i)
+    {
+        std::cout << "\n===== SERVER " << i + 1 << " =====" << std::endl;
+    
+        for (std::size_t j = 0; j < configs[i].locations.size(); ++j)
+        {
+            const LocationConfig &loc = configs[i].locations[j];
+        
+            std::cout << "Location: " << loc.path << std::endl;
+            std::cout << "Return code: " << loc.return_code << std::endl;
+            std::cout << "Return URL: " << loc.return_url << std::endl;
+            std::cout << "Root: " << loc.root << std::endl;
+            std::cout << "Index: " << loc.index << std::endl;
+            std::cout << "autoindex: " << loc.autoindex << std::endl;
+            std::cout << "uppload: " << loc.upload_enabled << std::endl;
+            std::cout << "upload_path: " << loc.upload_path << std::endl;
+            std::cout << "Max body size: " << configs[i].client_max_body_size << " bytes" << std::endl;
+            std::cout << "CGI count: " << loc.cgi.size() << std::endl;
+            for (std::size_t k = 0; k < loc.cgi.size(); ++k)
+            {
+                std::cout << "CGI extension: "
+                          << loc.cgi[k].extension << std::endl;
+            
+                std::cout << "CGI interpreter: "
+                          << loc.cgi[k].interpreter << std::endl;
+            }
+        }
+        for (std::size_t i = 0; i < configs.size(); ++i)
+        {
+            std::cout << "\nServer " << i + 1 << std::endl;
+            std::cout << "IP: " << configs[i].ip << std::endl;
+            std::cout << "Port: " << configs[i].port << std::endl;
+            std::cout << "Root: " << configs[i].root << std::endl;
+            std::cout << "Index: " << configs[i].index << std::endl;
+        }
+    }
+
+}
+
 void init_webserv(std::string &path)
 {
     webserv web(path);
@@ -26,18 +80,10 @@ void init_webserv(std::string &path)
         pars.set_token(Tok.get_token());
 
         configs =  pars.start_parse();
-
+            
         for (std::size_t i = 0; i < configs.size(); ++i)
             pars.validate_root(configs[i]);
-
-        for (std::size_t i = 0; i < configs.size(); ++i)
-        {
-            std::cout << "\nServer " << i + 1 << std::endl;
-            std::cout << "IP: " << configs[i].ip << std::endl;
-            std::cout << "Port: " << configs[i].port << std::endl;
-            std::cout << "Root: " << configs[i].root << std::endl;
-            std::cout << "Index: " << configs[i].index << std::endl;
-        }
+        print_conf(configs);
         Server serv(configs);
         serv.create_socket();
         std::cout << "Socket created successfully" << std::endl;
@@ -45,15 +91,15 @@ void init_webserv(std::string &path)
 
         serv.bind_socket();
         serv.listen_socket();
-        serv.run(Http_parser);
+        serv.run(Http_parser);  
     }
     catch (const std::exception& e)
     {
         std::cerr << "Config error: " << e.what() << std::endl;
         return ;
     }
-
 }
+   
 
 int main(int argc, char *argv[])
 {

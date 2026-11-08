@@ -8,7 +8,7 @@
 #include <unistd.h>
 #include <stdexcept>
 #include <sys/stat.h>
-
+#include <limits>
 #include "ServerConfig.hpp"
 #include "Tokenizer.hpp"
 
@@ -37,17 +37,38 @@ public:
     void parse_root(ServerConfig &conf, bool &root_defined);
     void parse_index(ServerConfig &conf, bool &index_defined);
     void parse_server_name(ServerConfig &conf, bool &server_name_defined);
+    void parse_error_page(ServerConfig &conf);
+
+    void parse_client_max_body_size(ServerConfig &conf, bool &defined);
+    void bit_size(const std::string &suffix, std::size_t &multiplier);
+    void get_number_multiplayer( const std::string &number_part, std::size_t &number);
 
     void warn_duplicate_listen_without_server_name(const std::vector<ServerConfig> &servers) const;
 
+    
+
+// listen
     bool is_valid_ipv4(const std::string &ip);
     bool is_valid_port(const std::string &port);
 
-    void validate_root(const ServerConfig &conf) const;
-
+// Location
     void parse_location(ServerConfig &conf);
+    void parse_location_directives(LocationConfig &location);
     void parse_location_root(LocationConfig &location);
-    void parse_location_index(LocationConfig &location);        
+    void parse_location_index(LocationConfig &location);
+    void check_location(const ServerConfig &conf) const;
+    void validate_root(const ServerConfig &conf) const;
+    void parse_location_allowed_methods(LocationConfig &location);
+    void parse_location_return(LocationConfig &location);
+    void parse_location_autoindex(LocationConfig &location);
+    void parse_location_upload(LocationConfig &location);
+    void parse_location_upload_path(LocationConfig &location);
+    void parse_location_cgi(LocationConfig &location);
+
+
+//  check file and path 
+    void validate_directory(const std::string &path, const std::string &name, int permissions) const;
+    void validate_executable(const std::string &path, const std::string &name) const;
 };
 
 #endif

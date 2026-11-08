@@ -56,6 +56,7 @@ class Server
 private:
     std::vector<int> _server_fds;
     std::vector<ServerConfig> _configs;
+    std::vector<ListenConfig> _listens;
     ServerConfig _conf;
 
     std::vector<ListenConfig> _listens;
