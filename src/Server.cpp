@@ -302,6 +302,7 @@ void Server::remove_client(int client_fd, std::vector<ClientConnection> &clients
     {
         if (it->fd == client_fd)
         {
+            std::cout << "Closing client FD: " << it->fd << std::endl;
             close(it->fd);
             clients.erase(it);
             return;
@@ -506,24 +507,38 @@ void Server::process_client_events(const std::vector<struct pollfd> &fds, std::v
     {
         int client_fd = fds[i].fd;
         short events = fds[i].revents;
+
         if (events == 0)
             continue;
+
         std::vector<ClientConnection>::iterator it = clients.begin();
 
         while (it != clients.end() && it->fd != client_fd)
             ++it;
+
         if (it == clients.end())
             continue;
-        if (events & (POLLNVAL | POLLHUP | POLLERR))
+
+        if (events & POLLNVAL)
         {
             remove_client(client_fd, clients);
             continue;
         }
+
         bool keep_client = true;
+
         if (events & POLLIN)
             keep_client = handle_client_event(*it, parser);
+
         if (keep_client && (events & POLLOUT))
             keep_client = handle_client_write(*it);
+
+        if (events & POLLERR)
+            keep_client = false;
+
+        if ((events & POLLHUP) && !it->response_ready)
+            keep_client = false;
+
         if (!keep_client)
             remove_client(client_fd, clients);
     }
