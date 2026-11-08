@@ -7,6 +7,7 @@ Server::Server(const std::vector<ServerConfig> &configs) : _configs(configs), _c
         throw std::runtime_error("No server configurations");
 
     _conf = _configs[0];
+    collect_listens();
 }
 
 void Server::set_nonblocking(int fd)
@@ -145,6 +146,28 @@ const LocationConfig *Server::find_location(const std::string &path) const
 
 
 
+void Server::collect_listens()
+{
+    _listens.clear();
+    _listen_config_indices.clear();
+
+
+    for(std::size_t i = 0; i < _configs.size(); i++)
+    {
+        for(std::size_t j = 0; j < _configs[i].listens.size(); j++)
+        {
+            const ListenConfig &current = _configs[i].listens[j];
+            for(std::size_t l = 0; l < _listens.size(); l++)
+            {
+                if(current.ip == _listens[l].ip && current.port == _listens[l].port)
+                    throw std::runtime_error("Duplicate listen address");
+            }
+            _listens.push_back(current);
+            _listen_config_indices.push_back(i);
+        }
+    }
+}
+
 void Server::handle_get(const HttpRequest &request, std::string &status, std::string &body)
 {
     std::string file_path;
@@ -281,7 +304,7 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
 {
     char buffer[4096];
     std::cout << "Reading from client: " << client.fd << std::endl;
-    ssize_t bytes_read = read(client.fd, buffer, sizeof(buffer));
+    ssize_t bytes_read = recv(client.fd, buffer, sizeof(buffer), 0);
 
     if (bytes_read == 0)
         return false;

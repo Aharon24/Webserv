@@ -41,6 +41,7 @@ void init_webserv(std::string &path)
         Server serv(configs);
         serv.create_socket();
         std::cout << "Socket created successfully" << std::endl;
+        
 
         serv.bind_socket();
         serv.listen_socket();

@@ -27,17 +27,25 @@
 struct ClientConnection
 {
     int fd;
+    std::size_t listener_index;
+
     std::string request_buffer;
     std::string response_buffer;
+
     std::size_t sent_bytes;
     bool request_complete;
     bool response_ready;
 
-    ClientConnection(): fd(-1),sent_bytes(0), request_complete(false), response_ready(false)
+    ClientConnection(): fd(-1), listener_index(0),sent_bytes(0), request_complete(false), response_ready(false)
     {
     }
 
-    explicit ClientConnection(int client_fd): fd(client_fd),sent_bytes(0),request_complete(false), response_ready(false)
+    explicit ClientConnection(int client_fd, std::size_t index = 0)
+        : fd(client_fd),
+          listener_index(index),
+          sent_bytes(0),
+          request_complete(false),
+          response_ready(false)
     {
     }
 };
@@ -49,6 +57,9 @@ private:
     std::vector<int> _server_fds;
     std::vector<ServerConfig> _configs;
     ServerConfig _conf;
+
+    std::vector<ListenConfig> _listens;
+    std::vector<std::size_t> _listen_config_indices;
 
 
     const LocationConfig *find_location(const std::string &path) const;
@@ -78,11 +89,16 @@ public:
     void run(HttpParser &parser);
 
 
+    void collect_listens();
+
     void create_socket();
     void bind_socket();
     void listen_socket();
     int accept_connection(int server_fd);
     void send_all(int client_fd, const std::string &data);
+
+
+
 
 };
 
