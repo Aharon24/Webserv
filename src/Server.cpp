@@ -1,12 +1,11 @@
 #include "Server.hpp"
 
 
-Server::Server(const std::vector<ServerConfig> &configs) : _configs(configs), _conf()
+Server::Server(const std::vector<ServerConfig> &configs) : _configs(configs)
 {
     if (_configs.empty())
         throw std::runtime_error("No server configurations");
 
-    _conf = _configs[0];
     collect_listens();
 }
 
@@ -45,7 +44,9 @@ void Server::create_socket()
             throw;
         }
         _server_fds.push_back(server_fd);
+        std::cout << "Created socket FD: " << server_fd << " for port: " << _listens[i].port << std::endl;
     }
+
 }
 
 
@@ -71,6 +72,7 @@ void Server::bind_socket()
             throw std::runtime_error("Invalid IPv4 address");
         if (bind(_server_fds[i], reinterpret_cast<struct sockaddr *>(&address), sizeof(address)) == -1)
             throw std::runtime_error("Failed to bind socket");
+        std::cout << "Bind successful: " << _listens[i].ip << ":" << _listens[i].port << std::endl;
     }
 }
 
@@ -116,14 +118,13 @@ void Server::send_all(int client_fd, const std::string &data)
         sent += static_cast<std::string::size_type>(result);
     }
 }
-
-const LocationConfig *Server::find_location(const std::string &path) const
+const LocationConfig* Server::find_location(const std::string &path, const ServerConfig &conf) const
 {
     const LocationConfig *best = NULL;
 
-    for (std::size_t i = 0; i < _conf.locations.size(); ++i)
+    for (std::size_t i = 0; i < conf.locations.size(); ++i)
     {
-        const std::string &prefix = _conf.locations[i].path;
+        const std::string &prefix = conf.locations[i].path;
         bool matches = false;
 
         if (prefix.empty())
@@ -139,7 +140,7 @@ const LocationConfig *Server::find_location(const std::string &path) const
                 matches = true;
         }
         if (matches &&(best == NULL || prefix.size() > best->path.size()))
-            best = &_conf.locations[i];
+            best = &conf.locations[i];
     }
     return best;
 }
@@ -166,13 +167,23 @@ void Server::collect_listens()
             _listen_config_indices.push_back(i);
         }
     }
+    std::cout << "\n========== COLLECTED LISTENS ==========" << std::endl;
+    for (std::size_t i = 0; i < _listens.size(); ++i)
+    {
+        std::cout << "Listen index: " << i << std::endl;
+        std::cout << "IP: " << _listens[i].ip << std::endl;
+        std::cout << "Port: " << _listens[i].port << std::endl;
+        std::cout << "_listen_config_indices[" << i << "] = "
+              << _listen_config_indices[i] << std::endl;
+        std::cout << "-----------------------------" << std::endl;
+    }
 }
 
-void Server::handle_get(const HttpRequest &request, std::string &status, std::string &body)
+void Server::handle_get(const HttpRequest &request,const ServerConfig &conf,std::string &status,std::string &body)
 {
     std::string file_path;
-    const LocationConfig *location = find_location(request.path);
-    file_path = build_file_path(request, location);
+    const LocationConfig *location = find_location(request.path, conf);
+    file_path = build_file_path(request, location, conf);
     struct stat info;
     if (stat(file_path.c_str(), &info) == 0 && S_ISDIR(info.st_mode))
     {
@@ -181,7 +192,7 @@ void Server::handle_get(const HttpRequest &request, std::string &status, std::st
         if (location != NULL && !location->index.empty())
             index = location->index;
         else
-            index = _conf.index;
+            index = conf.index;
         if (!file_path.empty() && file_path[file_path.size() - 1] != '/')
             file_path += '/';
         file_path += index;
@@ -230,7 +241,7 @@ std::string Server::create_response_data(const HttpRequest &request, std::string
     return (header.str());
 }
 
-std::string Server::build_response(const HttpRequest &request)
+std::string Server::build_response(const HttpRequest &request,const ServerConfig &conf)
 {
     std::string body;
     std::string status;
@@ -243,7 +254,7 @@ std::string Server::build_response(const HttpRequest &request)
         body = "403 Forbidden\n";
     }
     else if (request.method == "GET")
-        handle_get(request, status, body);
+        handle_get(request, conf, status, body);
     else if (request.method == "POST")
         handle_post(request, status, body);
     else if (request.method == "DELETE")
@@ -259,7 +270,7 @@ std::string Server::build_response(const HttpRequest &request)
 
 
 
-std::string Server::build_file_path(const HttpRequest &request,const LocationConfig *location) const
+std::string Server::build_file_path(const HttpRequest &request,const LocationConfig *location,const ServerConfig &conf) const
 {
     std::string root;
     std::string relative_path;
@@ -267,14 +278,14 @@ std::string Server::build_file_path(const HttpRequest &request,const LocationCon
     if (location != NULL)
     {
         if (location->root.empty())
-            root = _conf.root;
+            root = conf.root;
         else
             root = location->root;
         relative_path = request.path.substr(location->path.size());
     }
     else
     {
-        root = _conf.root;
+        root = conf.root;
         relative_path = request.path;   
     }
     if (!relative_path.empty() && relative_path[0] == '/')
@@ -331,22 +342,21 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
         std::cout << "Version: " << request.version << std::endl;
         std::cout << "Host:    " << request.host << std::endl;
         std::cout << "========================" << std::endl;
-        const ServerConfig *selected_config = find_server_config(request.host);
-        if (selected_config == NULL)
-        {
-            std::string status = "404 Not Found";
-            std::string body = "Unknown Host: " + request.host + "\n";
-        
-            client.response_buffer = create_response_data(request, status, body) + body;
-            std::cout << "Unknown Host: " << request.host << std::endl;
-        }
-        else
-        {
-            _conf = *selected_config;
-            std::cout << "Selected server_name: " << _conf.server_name << std::endl;
+        if (client.listener_index >= _listen_config_indices.size())
+            throw std::runtime_error("Invalid listener index");
 
-            client.response_buffer = build_response(request);
-        }
+        std::size_t config_index = _listen_config_indices[client.listener_index];
+
+        if (config_index >= _configs.size())
+            throw std::runtime_error("Invalid config index");
+
+        const ServerConfig &conf = _configs[config_index];
+
+        std::cout << "Selected config index: " << config_index << std::endl;
+
+        std::cout << "Selected server_name: " << conf.server_name << std::endl;
+
+        client.response_buffer = build_response(request, conf);
         client.request_complete = true;
         client.response_ready = true;
     }
@@ -418,6 +428,107 @@ const ServerConfig *Server::find_server_config(const std::string &host) const
     return  NULL;
 }
 
+std::vector<struct pollfd> Server::build_poll_fds(const std::vector<ClientConnection> &clients) const
+{
+    std::vector<struct pollfd> fds;
+
+    for (std::size_t i = 0; i < _server_fds.size(); ++i)
+    {
+        struct pollfd server_poll;
+        server_poll.fd = _server_fds[i];
+        server_poll.events = POLLIN;
+        server_poll.revents = 0;
+        fds.push_back(server_poll);
+    }
+
+    for (std::size_t i = 0; i < clients.size(); ++i)
+    {
+        struct pollfd client_poll;
+        client_poll.fd = clients[i].fd;
+        client_poll.events = clients[i].response_ready ? POLLOUT : POLLIN;
+        client_poll.revents = 0;
+        fds.push_back(client_poll);
+    }
+    return fds;
+}
+
+
+void Server::accept_ready_connections(const std::vector<struct pollfd> &fds, std::vector<ClientConnection> &clients)
+{
+    for (std::size_t i = 0; i < _server_fds.size(); ++i)
+    {
+        if (fds[i].revents & POLLIN)
+        {
+            int client_fd = accept_connection(_server_fds[i]);
+        
+            if (client_fd != -1)
+            {
+                std::cout << "Accepted client: " << client_fd << std::endl;
+                clients.push_back(ClientConnection(client_fd, i));
+            }
+        }
+    
+        if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL))
+            throw std::runtime_error("Listening socket error");
+    }
+}
+
+
+int Server::wait_for_events(std::vector<struct pollfd> &fds) const
+{
+    if (fds.empty())
+        throw std::runtime_error("No file descriptors to poll");
+
+    int result = poll(&fds[0], fds.size(), -1);
+
+    if (result == -1)
+    {
+        if (errno == EINTR)
+            return -1;
+
+        throw std::runtime_error("poll failed");
+    }
+
+    for (std::size_t i = 0; i < fds.size(); ++i)
+    {
+        if (fds[i].revents != 0)
+            std::cout << "fd: " << fds[i].fd << " events: " << fds[i].revents << std::endl;
+    }
+
+    std::cout << "poll returned: " << result << std::endl;
+
+    return result;
+}
+
+void Server::process_client_events(const std::vector<struct pollfd> &fds, std::vector<ClientConnection> &clients, HttpParser &parser)
+{
+    for (std::size_t i = _server_fds.size(); i < fds.size(); ++i)
+    {
+        int client_fd = fds[i].fd;
+        short events = fds[i].revents;
+        if (events == 0)
+            continue;
+        std::vector<ClientConnection>::iterator it = clients.begin();
+
+        while (it != clients.end() && it->fd != client_fd)
+            ++it;
+        if (it == clients.end())
+            continue;
+        if (events & (POLLNVAL | POLLHUP | POLLERR))
+        {
+            remove_client(client_fd, clients);
+            continue;
+        }
+        bool keep_client = true;
+        if (events & POLLIN)
+            keep_client = handle_client_event(*it, parser);
+        if (keep_client && (events & POLLOUT))
+            keep_client = handle_client_write(*it);
+        if (!keep_client)
+            remove_client(client_fd, clients);
+    }
+}
+
 void Server::run(HttpParser &parser)
 {
     std::vector<ClientConnection> clients;
@@ -426,100 +537,15 @@ void Server::run(HttpParser &parser)
     {
         std::vector<struct pollfd> fds;
 
-        for (std::size_t i = 0; i < _server_fds.size(); ++i)
-        {
-            struct pollfd server_poll;
+        fds = build_poll_fds(clients);
 
-            server_poll.fd = _server_fds[i];
-            server_poll.events = POLLIN;
-            server_poll.revents = 0;
-
-            fds.push_back(server_poll);
-        }
-
-        for (std::size_t i = 0; i < clients.size(); ++i)
-        {
-            struct pollfd client_poll;
-
-            client_poll.fd = clients[i].fd;
-            client_poll.events = clients[i].response_ready ? POLLOUT : POLLIN;
-            client_poll.revents = 0;
-            fds.push_back(client_poll);
-        }
-
-        int result = poll(&fds[0], fds.size(), -1);
-        for (std::size_t i = 0; i < fds.size(); ++i)
-        {
-            if (fds[i].revents != 0)
-            {
-                std::cout << "fd: " << fds[i].fd
-                          << " events: " << fds[i].revents
-                          << std::endl;
-            }
-        }
-
+        int result = wait_for_events(fds);
         if (result == -1)
-        {
-            if (errno == EINTR)
-                continue;
-            throw std::runtime_error("poll failed");
-        }
-        std::cout << "poll returned: " << result << std::endl;
-        for (std::size_t i = 0; i < _server_fds.size(); ++i)
-        {
-            if (fds[i].revents & POLLIN)
-            {
-                int client_fd = accept_connection(_server_fds[i]);
-            
-                if (client_fd != -1)
-                {
-                    std::cout << "Accepted client: "
-                              << client_fd << std::endl;
-                
-                    clients.push_back(ClientConnection(client_fd));
-                }
-            }
+            continue;       
+        accept_ready_connections(fds, clients);
         
-            if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL))
-                throw std::runtime_error("Listening socket error");
-        }
-        
-        for (std::size_t i = _server_fds.size(); i < fds.size(); ++i)
-        {
-            int client_fd = fds[i].fd;
-            short events = fds[i].revents;
+        process_client_events(fds, clients, parser);
 
-            if (events == 0)
-                continue;
-
-            std::vector<ClientConnection>::iterator it = clients.begin();
-
-            while (it != clients.end() && it->fd != client_fd)
-                ++it;
-
-            if (it == clients.end())
-                continue;
-
-            if (events & (POLLNVAL | POLLHUP | POLLERR))
-            {
-                remove_client(client_fd, clients);
-                continue;
-            }
-
-            bool keep_client = true;
-
-            if (events & POLLIN)
-                keep_client = handle_client_event(*it, parser);
-
-            if (keep_client && (events & POLLOUT))
-                keep_client = handle_client_write(*it);
-
-            if (events & (POLLHUP | POLLERR))
-                keep_client = false;
-
-            if (!keep_client)
-                remove_client(client_fd, clients);
-        }
     }
 }
 

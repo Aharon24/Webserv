@@ -56,19 +56,17 @@ class Server
 private:
     std::vector<int> _server_fds;
     std::vector<ServerConfig> _configs;
-    std::vector<ListenConfig> _listens;
-    ServerConfig _conf;
 
     std::vector<ListenConfig> _listens;
     std::vector<std::size_t> _listen_config_indices;
 
 
-    const LocationConfig *find_location(const std::string &path) const;
-    std::string build_file_path(const HttpRequest &request,const LocationConfig *location) const;
+    const LocationConfig *find_location(const std::string &path, const ServerConfig &conf) const;
+    std::string build_file_path(const HttpRequest &request,const LocationConfig *location,const ServerConfig &conf) const;
     Server(const Server &other);
     Server &operator=(const Server &other);
     void set_nonblocking(int fd);
-    std::string build_response(const HttpRequest &request);
+    std::string build_response(const HttpRequest &request,const ServerConfig &conf);
     const ServerConfig *find_server_config(const std::string &host) const;
 
 
@@ -77,7 +75,7 @@ public:
     ~Server();
 
     // GET POST DELTETE
-    void handle_get(const HttpRequest &request, std::string &status, std::string &body);
+    void handle_get(const HttpRequest &request,const ServerConfig &conf,std::string &status,std::string &body);
     void handle_post(const HttpRequest &request, std::string &status, std::string &body);
     void handle_delete(const HttpRequest &request, std::string &status, std::string &body); 
     std::string create_response_data(const HttpRequest &request, std::string &status, std::string &body);
@@ -86,9 +84,14 @@ public:
     bool handle_client_write(ClientConnection &client);
     //
 
+
+
     // Poll
     void run(HttpParser &parser);
-
+    std::vector<struct pollfd> build_poll_fds(const std::vector<ClientConnection> &clients) const;
+    void accept_ready_connections(const std::vector<struct pollfd> &fds, std::vector<ClientConnection> &clients);
+    int wait_for_events(std::vector<struct pollfd> &fds) const;
+    void process_client_events(const std::vector<struct pollfd> &fds, std::vector<ClientConnection> &clients, HttpParser &parser);
 
     void collect_listens();
 
