@@ -3,6 +3,8 @@
 
 Server::Server(const std::vector<ServerConfig> &configs) : _configs(configs)
 {
+    std::signal(SIGPIPE, SIG_IGN);
+
     if (_configs.empty())
         throw std::runtime_error("No server configurations");
 
@@ -311,29 +313,45 @@ void Server::remove_client(int client_fd, std::vector<ClientConnection> &clients
 }
 
 
-
-bool Server::handle_client_event(ClientConnection &client, HttpParser &http_parser)
+std::size_t Server::get_content_length(const std::string &headers_part) const
 {
-    char buffer[4096];
-    std::cout << "Reading from client: " << client.fd << std::endl;
-    ssize_t bytes_read = recv(client.fd, buffer, sizeof(buffer), 0);
+   std::string::size_type cl_pos = headers_part.find("Content-Length:");
+    if (cl_pos == std::string::npos)
+        cl_pos = headers_part.find("content-length:");
 
-    if (bytes_read == 0)
-        return false;
-
-    if (bytes_read < 0)
+    if (cl_pos != std::string::npos)
     {
-        std::cerr << "Failed to read HTTP request" << std::endl;
-        return false;
+        std::string::size_type colon = headers_part.find(':', cl_pos);
+        if (colon != std::string::npos)
+        {
+            std::string length_str = headers_part.substr(colon + 1);
+            return static_cast<std::size_t>(std::atoi(length_str.c_str()));
+        }
     }
+    return 0;
+}
 
-    client.request_buffer.append(buffer, static_cast<std::string::size_type>(bytes_read));
 
-    std::cout << "HTTP request received:\n" << client.request_buffer << std::endl;
-
-    if (client.request_buffer.find("\r\n\r\n") == std::string::npos)
+bool Server::check_max_body_size(ClientConnection &client, std::size_t content_length, const ServerConfig &conf)
+{
+    if (conf.client_max_body_size > 0 && content_length > conf.client_max_body_size)
+    {
+        std::cerr << "Error: Request body exceeds client_max_body_size" << std::endl;
+        HttpRequest dummy_req;
+        dummy_req.version = "HTTP/1.1";
+        std::string status = "413 Payload Too Large";
+        std::string body = "413 Payload Too Large\n";
+        client.response_buffer = create_response_data(dummy_req, status, body) + body;
+        client.request_complete = true;
+        client.response_ready = true;
         return true;
+    }
+    return false;
+}
 
+
+void Server::parse_and_respond(ClientConnection &client, HttpParser &http_parser, const ServerConfig &conf)
+{
     try
     {
         HttpRequest request = http_parser.parse(client.request_buffer);
@@ -343,19 +361,6 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
         std::cout << "Version: " << request.version << std::endl;
         std::cout << "Host:    " << request.host << std::endl;
         std::cout << "========================" << std::endl;
-        if (client.listener_index >= _listen_config_indices.size())
-            throw std::runtime_error("Invalid listener index");
-
-        std::size_t config_index = _listen_config_indices[client.listener_index];
-
-        if (config_index >= _configs.size())
-            throw std::runtime_error("Invalid config index");
-
-        const ServerConfig &conf = _configs[config_index];
-
-        std::cout << "Selected config index: " << config_index << std::endl;
-
-        std::cout << "Selected server_name: " << conf.server_name << std::endl;
 
         client.response_buffer = build_response(request, conf);
         client.request_complete = true;
@@ -364,39 +369,116 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
     catch (const std::exception &e)
     {
         std::cerr << e.what() << std::endl;
-
         HttpRequest request;
         request.version = "HTTP/1.1";
-
         std::string status = "400 Bad Request";
         std::string body = "400 Bad Request\n";
-
         client.response_buffer = create_response_data(request, status, body) + body;
         client.request_complete = true;
         client.response_ready = true;
     }
+}
 
+
+bool Server::read_client_data(ClientConnection &client, bool &stop_processing)
+{
+    char buffer[4096];
+    ssize_t bytes_read;
+
+    do
+    {
+        bytes_read = recv(client.fd, buffer, sizeof(buffer), 0);
+    }
+    while (bytes_read < 0 && errno == EINTR);
+
+    if (bytes_read == 0)
+        return false; 
+    if (bytes_read < 0)
+    {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            stop_processing = true;
+            return true;
+        }
+        std::cerr << "Failed to read HTTP request" << std::endl;
+        return false;
+    }
+    client.last_activity = time(NULL);
+    client.request_buffer.append(buffer, static_cast<std::string::size_type>(bytes_read));
+    stop_processing = false;
     return true;
 }
+
+
+bool Server::handle_client_event(ClientConnection &client, HttpParser &http_parser)
+{
+    bool stop_processing = false;
+    if (!read_client_data(client, stop_processing))
+        return false;
+    if (stop_processing)
+        return true;
+
+    std::string::size_type header_end = client.request_buffer.find("\r\n\r\n");
+    if (header_end == std::string::npos)
+        return true; 
+    const ServerConfig &conf = get_server_config(client);
+
+    std::string headers_part = client.request_buffer.substr(0, header_end);
+    std::size_t content_length = get_content_length(headers_part);
+
+    if (check_max_body_size(client, content_length, conf))
+        return true;
+
+    std::string::size_type body_start = header_end + 4;
+    if (client.request_buffer.size() - body_start < content_length)
+        return true;
+
+    parse_and_respond(client, http_parser, conf);
+    return true;
+}
+
+const ServerConfig &Server::get_server_config(const ClientConnection &client) const
+{
+    if (client.listener_index >= _listen_config_indices.size())
+        throw std::runtime_error("Invalid listener index");
+
+    std::size_t config_index = _listen_config_indices[client.listener_index];
+    if (config_index >= _configs.size())
+        throw std::runtime_error("Invalid config index");
+
+    return _configs[config_index];
+}
+
 
 
 bool Server::handle_client_write(ClientConnection &client)
 {
     if (client.sent_bytes >= client.response_buffer.size())
         return false;
-
     ssize_t bytes_sent = send(client.fd, client.response_buffer.c_str() + client.sent_bytes,
-        client.response_buffer.size() - client.sent_bytes,
-        0
-    );
-
-    if (bytes_sent <= 0)
+        client.response_buffer.size() - client.sent_bytes, 0);
+    if (bytes_sent < 0)
+    {
+        if(errno == EAGAIN || errno == EWOULDBLOCK)
+            return true;
+        return false ;
+    }
+    if(bytes_sent == 0)
         return false;
-
     client.sent_bytes += static_cast<std::size_t>(bytes_sent);
-
-    return client.sent_bytes < client.response_buffer.size();
-}
+    client.last_activity = time(NULL);
+    if (client.sent_bytes < client.response_buffer.size())
+        return true;
+    std::cout << "Response fully sent to client FD: " << client.fd << std::endl;
+    bool close_connection = (client.response_buffer.find("Connection: close") != std::string::npos);
+    if (close_connection)
+        return false;
+    else
+    {
+        client.reset();
+        return true;
+    }
+}   
 
 const ServerConfig *Server::find_server_config(const std::string &host) const
 {
@@ -475,12 +557,12 @@ void Server::accept_ready_connections(const std::vector<struct pollfd> &fds, std
 }
 
 
-int Server::wait_for_events(std::vector<struct pollfd> &fds) const
+int Server::wait_for_events(std::vector<struct pollfd> &fds, int timeout_ms) const
 {
     if (fds.empty())
-        throw std::runtime_error("No file descriptors to poll");
+        return 0;
 
-    int result = poll(&fds[0], fds.size(), -1);
+    int result = poll(&fds[0], fds.size(),timeout_ms);
 
     if (result == -1)
     {
@@ -489,15 +571,6 @@ int Server::wait_for_events(std::vector<struct pollfd> &fds) const
 
         throw std::runtime_error("poll failed");
     }
-
-    for (std::size_t i = 0; i < fds.size(); ++i)
-    {
-        if (fds[i].revents != 0)
-            std::cout << "fd: " << fds[i].fd << " events: " << fds[i].revents << std::endl;
-    }
-
-    std::cout << "poll returned: " << result << std::endl;
-
     return result;
 }
 
@@ -507,10 +580,8 @@ void Server::process_client_events(const std::vector<struct pollfd> &fds, std::v
     {
         int client_fd = fds[i].fd;
         short events = fds[i].revents;
-
         if (events == 0)
             continue;
-
         std::vector<ClientConnection>::iterator it = clients.begin();
 
         while (it != clients.end() && it->fd != client_fd)
@@ -524,9 +595,7 @@ void Server::process_client_events(const std::vector<struct pollfd> &fds, std::v
             remove_client(client_fd, clients);
             continue;
         }
-
         bool keep_client = true;
-
         if (events & POLLIN)
             keep_client = handle_client_event(*it, parser);
 
@@ -544,23 +613,40 @@ void Server::process_client_events(const std::vector<struct pollfd> &fds, std::v
     }
 }
 
+
+void Server::check_timeouts(std::vector<ClientConnection> &clients, time_t timeout_seconds)
+{
+    time_t current_time = time(NULL);
+    for(std::size_t i = 0; i < clients.size(); )
+    {
+        if(current_time - clients[i].last_activity > timeout_seconds)
+        {
+            std::cout << "Client FD " << clients[i].fd << " timed out. Closing connection." << std::endl;
+            close(clients[i].fd);
+            clients.erase(clients.begin() + i);
+        }
+        else
+            ++i;
+    }
+}
+
 void Server::run(HttpParser &parser)
 {
     std::vector<ClientConnection> clients;
-
+    const time_t TIMEOUT_SECONDS = 5;
     while (true)
     {
+        check_timeouts(clients, TIMEOUT_SECONDS);
         std::vector<struct pollfd> fds;
 
         fds = build_poll_fds(clients);
 
-        int result = wait_for_events(fds);
-        if (result == -1)
+        int result = wait_for_events(fds, 1000);
+        if (result <= 0)
             continue;       
         accept_ready_connections(fds, clients);
         
         process_client_events(fds, clients, parser);
-
     }
 }
 
