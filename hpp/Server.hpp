@@ -25,6 +25,7 @@
 
 #include <csignal>
 #include <ctime>
+#include <cstdlib>
 
 struct ClientConnection
 {
@@ -99,7 +100,7 @@ public:
     bool check_max_body_size(ClientConnection &client, std::size_t content_length, const ServerConfig &conf);
     void parse_and_respond(ClientConnection &client, HttpParser &http_parser, const ServerConfig &conf);
     bool read_client_data(ClientConnection &client, bool &stop_processing);
-
+    const ServerConfig &get_server_config(const ClientConnection &client) const;
 
     bool handle_client_write(ClientConnection &client);
     //
