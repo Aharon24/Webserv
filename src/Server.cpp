@@ -202,6 +202,9 @@ void Server::handle_post(const HttpRequest &request, std::string &status, std::s
         
     std::cout << "POST method received!" << std::endl;
     std::cout << "Request path: " << request.path << std::endl;
+    std::cout << "Content-Length: " << request.content_length << std::endl;
+    std::cout << "Body size: " << request.body.size() << std::endl;
+    std::cout << "Body: [" << request.body << "]" << std::endl;
 
     status = "501 Not Implemented";
     body = "POST is not implemented yet\n";
@@ -316,19 +319,48 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
 
     std::cout << "HTTP request received:\n" << client.request_buffer << std::endl;
 
-    if (client.request_buffer.find("\r\n\r\n") == std::string::npos)
+    if (client.request_complete)
         return true;
 
     try
     {
-        HttpRequest request = http_parser.parse(client.request_buffer);
+        HttpRequest request;
+        HttpParser::ParseResult parse_result =
+            http_parser.parse(client.request_buffer, request);
+
+        if (request.method.empty())
+            return true;
+
+        const ServerConfig *selected_config = find_server_config(request.host);
+        std::size_t max_body = selected_config
+            ? selected_config->client_max_body_size
+            : _conf.client_max_body_size;
+        if (request.content_length > max_body)
+        {
+            std::string status = "413 Payload Too Large";
+            std::string body = "413 Payload Too Large\n";
+            client.response_buffer = create_response_data(request, status, body) + body;
+            client.request_complete = true;
+            client.response_ready = true;
+            return true;
+        }
+        if (parse_result == HttpParser::PARSE_INCOMPLETE)
+            return true;
+
         std::cout << "===== HTTP REQUEST =====" << std::endl;
         std::cout << "Method:  " << request.method << std::endl;
         std::cout << "Path:    " << request.path << std::endl;
+        std::cout << "Query:   " << request.query << std::endl;
         std::cout << "Version: " << request.version << std::endl;
         std::cout << "Host:    " << request.host << std::endl;
+        std::cout << "Content-Length: " << request.content_length << std::endl;
+        std::cout << "Body:    [" << request.body << "]" << std::endl;
+        for (std::map<std::string, std::string>::const_iterator it = request.headers.begin();
+             it != request.headers.end(); ++it)
+        {
+            std::cout << "Header:  " << it->first << ": " << it->second << std::endl;
+        }
         std::cout << "========================" << std::endl;
-        const ServerConfig *selected_config = find_server_config(request.host);
         if (selected_config == NULL)
         {
             std::string status = "404 Not Found";
@@ -497,7 +529,7 @@ void Server::run(HttpParser &parser)
             if (it == clients.end())
                 continue;
 
-            if (events & (POLLNVAL | POLLHUP | POLLERR))
+            if (events & POLLNVAL)
             {
                 remove_client(client_fd, clients);
                 continue;
@@ -508,13 +540,12 @@ void Server::run(HttpParser &parser)
             if (events & POLLIN)
                 keep_client = handle_client_event(*it, parser);
 
-            if (keep_client && (events & POLLOUT))
+            if (keep_client && (it->response_ready || (events & POLLOUT)))
                 keep_client = handle_client_write(*it);
 
-            if (events & (POLLHUP | POLLERR))
-                keep_client = false;
-
-            if (!keep_client)
+            if (!keep_client || (events & POLLERR))
+                remove_client(client_fd, clients);
+            else if ((events & POLLHUP) && !it->response_ready)
                 remove_client(client_fd, clients);
         }
     }
