@@ -91,7 +91,7 @@ public:
     // GET POST DELTETE
     void handle_get(const HttpRequest &request,const ServerConfig &conf,std::string &status,std::string &body);
     void handle_post(const HttpRequest &request, std::string &status, std::string &body);
-    void handle_delete(const HttpRequest &request, std::string &status, std::string &body); 
+    void handle_delete(const HttpRequest &request, const ServerConfig &conf, std::string &status, std::string &body);
     std::string create_response_data(const HttpRequest &request, std::string &status, std::string &body);
     void remove_client(int client_fd, std::vector<ClientConnection> &clients);
     bool handle_client_event(ClientConnection &client, HttpParser &parser);

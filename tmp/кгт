@@ -1,0 +1,1 @@
+bash tmp/test_delete.sh tmp/delete_test.conf 9090 /uploads

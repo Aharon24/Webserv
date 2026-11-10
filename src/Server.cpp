@@ -1,4 +1,5 @@
 #include "Server.hpp"
+#include <limits.h> // PATH_MAX for resolved filesystem paths
 
 
 Server::Server(const std::vector<ServerConfig> &configs) : _configs(configs)
@@ -222,13 +223,168 @@ void Server::handle_post(const HttpRequest &request, std::string &status, std::s
     status = "501 Not Implemented";
     body = "POST is not implemented yet\n";
 }
-void Server::handle_delete(const HttpRequest &request, std::string &status, std::string &body)
-{
-    std::cout << "DELETE method received!" << std::endl;
-    std::cout << "Request path: " << request.path << std::endl;
 
-    status = "501 Not Implemented";
-    body = "DELETE is not implemented yet\n";
+/*
+** ============================================================
+** HTTP DELETE - TODO
+** 42 Webserv | Programmer 4
+** ============================================================
+**
+** TODO 1: Configuration
+** [ ] Receive the current ServerConfig.
+** [ ] Find the matching LocationConfig.
+** [ ] Check whether DELETE is allowed.
+**
+** TODO 2: Resolve target
+** [ ] Use the existing build_file_path().
+** [ ] Prevent path traversal.
+** [ ] Prevent deletion outside the allowed root.
+**
+** TODO 3: Validate target
+** [ ] Check whether the target exists.
+** [ ] Reject directories.
+** [ ] Handle inaccessible targets.
+**
+** TODO 4: Delete file
+** [ ] Call unlink().
+** [ ] Check the return value.
+** [ ] Handle errno correctly.
+**
+** TODO 5: HTTP response
+** [ ] Return 204 No Content on success.
+** [ ] Return 404 for a missing resource.
+** [ ] Return 403 for a forbidden operation.
+** [ ] Handle other filesystem errors.
+**
+** TODO 6: Tests
+** [ ] Delete an existing file.
+** [ ] Delete a nonexistent file.
+** [ ] Attempt to delete a directory.
+** [ ] Attempt path traversal.
+** [ ] Attempt DELETE in a forbidden location.
+** [ ] Verify that other files remain untouched.
+**
+** RULES:
+** - C++98 only.
+** - Preserve existing code where possible.
+** - No recursive directory deletion.
+** - Do not modify unrelated modules.
+** ============================================================
+*/
+
+void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,
+                           std::string &status, std::string &body)
+{
+    // Find the location responsible for this request.
+    const LocationConfig *location = find_location(request.path, conf);
+
+    // Check whether DELETE is allowed in this location.
+    if (location != NULL && !location->allowed_methods.empty())
+    {
+        bool allowed = false;
+
+        for (std::size_t i = 0; i < location->allowed_methods.size(); ++i)
+        {
+            if (location->allowed_methods[i] == "DELETE")
+                allowed = true;
+        }
+        if (!allowed)
+        {
+            status = "405 Method Not Allowed";
+            body = "405 Method Not Allowed\n";
+            return;
+        }
+    }
+
+    // Reject invalid or potentially unsafe request paths.
+    if (request.path.empty() || request.path[0] != '/'
+        || request.path.find("..") != std::string::npos)
+    {
+        status = "403 Forbidden";
+        body = "403 Forbidden\n";
+        return;
+    }
+
+    // Reuse the existing URI-to-filesystem mapping.
+    const std::string file_path = build_file_path(request, location, conf);
+
+    // Select the configured filesystem root.
+    std::string root = conf.root;
+    if (location != NULL && !location->root.empty())
+        root = location->root;
+
+    // Resolve paths to prevent deletion outside the configured root.
+    char resolved_root[PATH_MAX];
+    char resolved_file[PATH_MAX];
+
+    if (root.empty() || realpath(root.c_str(), resolved_root) == NULL)
+    {
+        status = "500 Internal Server Error";
+        body = "Invalid server root\n";
+        return;
+    }
+
+    // Check the target without following a final symbolic link.
+    struct stat info;
+    if (lstat(file_path.c_str(), &info) == -1)
+    {
+        if (errno == ENOENT || errno == ENOTDIR)
+            status = "404 Not Found";
+        else if (errno == EACCES || errno == EPERM)
+            status = "403 Forbidden";
+        else
+            status = "500 Internal Server Error";
+        body = status + "\n";
+        return;
+    }
+
+    // Never delete directories, symbolic links or special files.
+    if (!S_ISREG(info.st_mode))
+    {
+        status = "403 Forbidden";
+        body = "403 Forbidden\n";
+        return;
+    }
+
+    if (realpath(file_path.c_str(), resolved_file) == NULL)
+    {
+        status = "403 Forbidden";
+        body = "403 Forbidden\n";
+        return;
+    }
+
+    const std::string root_path(resolved_root);
+    const std::string target_path(resolved_file);
+
+    // The target must be strictly inside the configured root.
+    std::string prefix = root_path;
+    if (prefix[prefix.size() - 1] != '/')
+        prefix += '/';
+
+    if (target_path.compare(0, prefix.size(), prefix) != 0)
+    {
+        status = "403 Forbidden";
+        body = "403 Forbidden\n";
+        return;
+    }
+
+    // Delete the file and translate filesystem errors to HTTP status.
+    if (unlink(file_path.c_str()) == -1)
+    {
+        if (errno == ENOENT || errno == ENOTDIR)
+            status = "404 Not Found";
+        else if (errno == EACCES || errno == EPERM || errno == EROFS)
+            status = "403 Forbidden";
+        else
+            status = "500 Internal Server Error";
+
+        body = status + "\n";
+        return;
+    }
+
+    // Successful DELETE does not return a response body.
+    status = "204 No Content";
+    body.clear();
 }
 
 
@@ -260,7 +416,7 @@ std::string Server::build_response(const HttpRequest &request,const ServerConfig
     else if (request.method == "POST")
         handle_post(request, status, body);
     else if (request.method == "DELETE")
-        handle_delete(request, status, body);
+        handle_delete(request, conf, status, body);
     else
     {
         status = "405 Method Not Allowed";
