@@ -354,7 +354,11 @@ void Server::parse_and_respond(ClientConnection &client, HttpParser &http_parser
 {
     try
     {
-        HttpRequest request = http_parser.parse(client.request_buffer);
+        HttpRequest request;
+        HttpParser::ParseResult parse_result = http_parser.parse(client.request_buffer, request);
+
+        if (parse_result == HttpParser::PARSE_INCOMPLETE)
+            return;
         std::cout << "===== HTTP REQUEST =====" << std::endl;
         std::cout << "Method:  " << request.method << std::endl;
         std::cout << "Path:    " << request.path << std::endl;

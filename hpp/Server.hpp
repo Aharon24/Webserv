@@ -3,6 +3,7 @@
 
 #include "ServerConfig.hpp"
 #include "HttpRequest.hpp"
+#include "HttpParser.hpp"
 
 #include <cerrno>
 
