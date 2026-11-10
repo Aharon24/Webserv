@@ -522,13 +522,21 @@ void Server::parse_and_respond(ClientConnection &client, HttpParser &http_parser
         client.request_complete = true;
         client.response_ready = true;
     }
-    catch (const std::exception &e)
+    catch(const std::exception &e)
     {
-        std::cerr << e.what() << std::endl;
+        std::cerr << "Parse error: " << e.what() << std::endl;
         HttpRequest request;
         request.version = "HTTP/1.1";
+        
+        std::string err_msg = e.what();
         std::string status = "400 Bad Request";
-        std::string body = "400 Bad Request\n";
+        
+        if (err_msg.size() >= 3 && std::isdigit(err_msg[0]) && std::isdigit(err_msg[1]) && std::isdigit(err_msg[2]))
+        {
+            status = err_msg;
+        }
+        
+        std::string body = status + "\n";
         client.response_buffer = create_response_data(request, status, body) + body;
         client.request_complete = true;
         client.response_ready = true;
@@ -551,11 +559,6 @@ bool Server::read_client_data(ClientConnection &client, bool &stop_processing)
         return false; 
     if (bytes_read < 0)
     {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-        {
-            stop_processing = true;
-            return true;
-        }
         std::cerr << "Failed to read HTTP request" << std::endl;
         return false;
     }
@@ -614,11 +617,7 @@ bool Server::handle_client_write(ClientConnection &client)
     ssize_t bytes_sent = send(client.fd, client.response_buffer.c_str() + client.sent_bytes,
         client.response_buffer.size() - client.sent_bytes, 0);
     if (bytes_sent < 0)
-    {
-        if(errno == EAGAIN || errno == EWOULDBLOCK)
-            return true;
         return false ;
-    }
     if(bytes_sent == 0)
         return false;
     client.sent_bytes += static_cast<std::size_t>(bytes_sent);
