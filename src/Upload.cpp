@@ -66,12 +66,6 @@
 ** [ ] Test an invalid upload directory.
 ** [ ] Test malformed multipart data.
 ** [ ] Verify that failed uploads leave no partial files.
-**
-** RULES:
-** - C++98 only.
-** - Keep functions small and understandable.
-** - Do not duplicate HTTP parsing or socket handling.
-** - Do not modify other modules without necessity.
 ** ============================================================
 */
 
@@ -314,6 +308,7 @@ namespace
         return true;
     }
 
+	// Rejects empty names, "." and "..", and any path separators or NUL bytes.
     bool valid_filename(const std::string &filename)
     {
         return !filename.empty()
@@ -441,6 +436,7 @@ namespace
         return true;
     }
 
+	// Checks that the directory exists, is a directory, and is writable and searchable.
     bool valid_directory(const std::string &directory)
     {
         if (directory.empty() || directory.find('\0') != std::string::npos)
@@ -459,6 +455,7 @@ namespace
         return access(directory.c_str(), W_OK | X_OK) == 0;
     }
 
+	// Writes the entire content to the file descriptor, handling partial writes and EINTR.
     bool write_content(int fd, const std::string &content)
     {
         std::string::size_type offset = 0;
@@ -488,6 +485,8 @@ namespace
     }
 }
 
+// Saves a file to the specified directory, rejecting unsafe filenames and existing files.
+// On failure, returns false and sets errno. Existing files are preserved.
 bool Upload::save_file(const std::string &directory,
                        const std::string &filename,
                        const std::string &content)
