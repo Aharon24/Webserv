@@ -46,7 +46,7 @@ struct ClientConnection
 
     explicit ClientConnection(int client_fd, std::size_t index = 0)
         : fd(client_fd),
-          listener_index(0),
+          listener_index(index),
           sent_bytes(0),
           request_complete(false),
           response_ready(false),
