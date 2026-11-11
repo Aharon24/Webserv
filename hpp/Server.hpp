@@ -46,7 +46,7 @@ struct ClientConnection
 
     explicit ClientConnection(int client_fd, std::size_t index = 0)
         : fd(client_fd),
-          listener_index(index),
+          listener_index(0),
           sent_bytes(0),
           request_complete(false),
           response_ready(false),
@@ -120,7 +120,6 @@ public:
     void bind_socket();
     void listen_socket();
     int accept_connection(int server_fd);
-    void send_all(int client_fd, const std::string &data);
 
 
     void check_timeouts(std::vector<ClientConnection> &clients, time_t timeout_seconds);
