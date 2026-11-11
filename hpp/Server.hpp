@@ -3,6 +3,8 @@
 
 #include "ServerConfig.hpp"
 #include "HttpRequest.hpp"
+#include "Router.hpp"
+#include "HttpResponse.hpp"
 
 #include <cerrno>
 
@@ -89,7 +91,6 @@ public:
     ~Server();
 
     // GET POST DELTETE
-    void handle_get(const HttpRequest &request,const ServerConfig &conf,std::string &status,std::string &body);
     void handle_post(const HttpRequest &request, std::string &status, std::string &body);
     void handle_delete(const HttpRequest &request, const ServerConfig &conf, std::string &status, std::string &body);
     std::string create_response_data(const HttpRequest &request, std::string &status, std::string &body);
