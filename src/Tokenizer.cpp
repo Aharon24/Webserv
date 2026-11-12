@@ -91,8 +91,12 @@ void Tokenizer::add_token_word(std::string &word)
 {
     Token t;
     t.value = word;
-    if (word == "server") {
-        t.type = TOKEN_SERVER;
+    if (word == "server") 
+    {
+        if (this->_tokens.empty() || this->_tokens.back().type == TOKEN_RBRACE)
+            t.type = TOKEN_SERVER;
+        else
+            t.type = TOKEN_ARGUMENT;
     } 
     else if (word == "listen") {
         t.type = TOKEN_LISTEN;
@@ -201,6 +205,7 @@ void Tokenizer::str_to_token(std::string line)
 
 void Tokenizer::create_tokens()
 {
+    _tokens.clear();
     std::string p = file_path;
     std::string line;
     std::ifstream file(p.c_str());

@@ -358,6 +358,18 @@ std::string Server::build_response(const HttpRequest &request,const ServerConfig
     std::string body;
     std::string status;
 
+    const LocationConfig *location = find_location(request.path, conf);
+
+    if (location != NULL && location->return_code != 0)
+    {
+        std::ostringstream ss;
+        ss << request.version << " " << location->return_code << " Moved Permanently\r\n"
+           << "Location: " << location->return_url << "\r\n"
+           << "Content-Length: 0\r\n"
+           << "Connection: close\r\n\r\n";
+        return ss.str();
+    }
+
     if (request.path.empty() ||
         request.path[0] != '/' ||
         request.path.find("..") != std::string::npos)

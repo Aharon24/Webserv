@@ -108,6 +108,11 @@ int main(int argc, char *argv[])
     path = "";
     if(argc == 2)
         path = argv[1];
+    if(argc > 2)
+    {
+        std::cout << "Error wrong argument" << std::endl;  
+        return 1;
+    }
     init_webserv(path);
 }
 

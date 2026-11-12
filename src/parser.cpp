@@ -224,11 +224,12 @@ void Parser::check_location(const ServerConfig &conf) const
     {
         const LocationConfig &location = conf.locations[i];
 
-        if (location.root.empty())
+        if (location.root.empty() && location.return_code == 0)
             throw std::runtime_error("Missing root for location: " + location.path);
 
-        validate_directory(location.root, "location root", R_OK | X_OK);
 
+        if (!location.root.empty())
+            validate_directory(location.root, "location root", R_OK | X_OK);
         // Check upload directory
         if (location.upload_enabled)
             validate_directory(location.upload_path, "upload path",W_OK | X_OK);
@@ -717,6 +718,8 @@ void Parser::parse_server(ServerConfig &conf)
     ++_index;
     if (!listen_defined)
         throw std::runtime_error("Missing required directive: listen");
+    if (!root_defined)
+        throw std::runtime_error("Missing required directive: root");
     for (std::size_t i = 0; i < conf.locations.size(); ++i)
     {
         if (conf.locations[i].root.empty())
