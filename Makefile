@@ -12,7 +12,10 @@ SRCS = src/main.cpp \
        src/parser.cpp \
        src/Server.cpp \
        src/HttpRequest.cpp \
-       src/Upload.cpp
+       src/Upload.cpp \
+			 src/Router.cpp \
+			 src/StaticFileHandler.cpp \
+			 src/HttpResponse.cpp
 
 # Store object files inside obj/
 OBJS = $(patsubst src/%.cpp,$(OBJDIR)/%.o,$(SRCS))

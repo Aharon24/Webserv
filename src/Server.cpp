@@ -161,38 +161,6 @@ void Server::collect_listens()
     }
 }
 
-void Server::handle_get(const HttpRequest &request,const ServerConfig &conf,std::string &status,std::string &body)
-{
-    std::string file_path;
-    const LocationConfig *location = find_location(request.path, conf);
-    file_path = build_file_path(request, location, conf);
-    struct stat info;
-    if (stat(file_path.c_str(), &info) == 0 && S_ISDIR(info.st_mode))
-    {
-        std::string index;
-    
-        if (location != NULL && !location->index.empty())
-            index = location->index;
-        else
-            index = conf.index;
-        if (!file_path.empty() && file_path[file_path.size() - 1] != '/')
-            file_path += '/';
-        file_path += index;
-    }
-    std::ifstream file(file_path.c_str(), std::ios::in | std::ios::binary);
-    if(!file)
-    {
-        status = "404 Not Found";
-        body = "404 Not Found\n";
-    }
-    else
-    {
-        std::ostringstream content;
-        content << file.rdbuf();
-        body = content.str();
-        status = "200 OK";
-    }
-}
 void Server::handle_post(const HttpRequest &request, std::string &status, std::string &body)
 {
         
@@ -353,34 +321,31 @@ std::string Server::create_response_data(const HttpRequest &request, std::string
     return (header.str());
 }
 
-std::string Server::build_response(const HttpRequest &request,const ServerConfig &conf)
-{
-    std::string body;
-    std::string status;
-
-    if (request.path.empty() ||
-        request.path[0] != '/' ||
-        request.path.find("..") != std::string::npos)
+std::string Server::build_response(const HttpRequest &request, const ServerConfig &conf)
     {
-        status = "403 Forbidden";
-        body = "403 Forbidden\n";
+        Router router(conf);
+        HttpResponse response;
+
+        if (router.prepare(request, response))      // 400 / 403 / redirect / 405
+            return response.to_string(request.version);
+
+        if (request.method == "GET")
+            response = router.handle_get(request);
+        else if (request.method == "POST" || request.method == "DELETE")
+        {
+            std::string status;
+            std::string body;
+
+            if (request.method == "POST")
+                handle_post(request, status, body);
+            else
+                handle_delete(request, conf, status, body);
+            response = router.from_status_line(status, body);
+        }
+        else
+            response = router.error_response(405);
+        return response.to_string(request.version);
     }
-    else if (request.method == "GET")
-        handle_get(request, conf, status, body);
-    else if (request.method == "POST")
-        handle_post(request, status, body);
-    else if (request.method == "DELETE")
-        handle_delete(request, conf, status, body);
-    else
-    {
-        status = "405 Method Not Allowed";
-        body = "405 Method Not Allowed\n";
-    }
-
-    return create_response_data(request, status, body) + body;
-}
-
-
 
 std::string Server::build_file_path(const HttpRequest &request,const LocationConfig *location,const ServerConfig &conf) const
 {
