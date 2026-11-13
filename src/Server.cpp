@@ -84,7 +84,7 @@ int Server::accept_connection(int server_fd)
 
     if (client_fd == -1)
     {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
             return -1;
         throw std::runtime_error("Failed to accept connection");
     }
@@ -520,10 +520,7 @@ bool Server::read_client_data(ClientConnection &client, bool &stop_processing)
         return false;
 
     if (bytes_read < 0)
-    {
-        stop_processing = true;
-        return true;
-    }
+        return false;
 
     client.last_activity = time(NULL);
 
@@ -588,7 +585,7 @@ bool Server::handle_client_write(ClientConnection &client)
         0);
 
     if (bytes_sent < 0)
-        return true;
+        return false;
 
     if (bytes_sent == 0)
         return false;
@@ -667,19 +664,27 @@ void Server::accept_ready_connections(const std::vector<struct pollfd> &fds, std
 {
     for (std::size_t i = 0; i < _server_fds.size(); ++i)
     {
+        if (_server_fds[i] == -1)
+            continue;
+
         if (fds[i].revents & POLLIN)
         {
             int client_fd = accept_connection(_server_fds[i]);
-        
+
             if (client_fd != -1)
             {
                 std::cout << "Accepted client: " << client_fd << std::endl;
                 clients.push_back(ClientConnection(client_fd, i));
             }
         }
-    
+
         if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL))
-            throw std::runtime_error("Listening socket error");
+        {
+            std::cerr << "Error: Listening socket FD " << _server_fds[i]
+                      << " encountered error/hangup/invalid state." << std::endl;
+            close(_server_fds[i]);
+            _server_fds[i] = -1;
+        }
     }
 }
 
@@ -764,6 +769,7 @@ void Server::run(HttpParser &parser)
     while (true)
     {
         check_timeouts(clients, TIMEOUT_SECONDS);
+
         std::vector<struct pollfd> fds;
 
         fds = build_poll_fds(clients);
