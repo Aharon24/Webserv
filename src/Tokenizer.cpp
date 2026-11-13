@@ -91,52 +91,52 @@ void Tokenizer::add_token_word(std::string &word)
 {
     Token t;
     t.value = word;
-    if (word == "server") 
+
+    bool at_statement_start = _tokens.empty();
+
+    if (!_tokens.empty())
     {
-        if (this->_tokens.empty() || this->_tokens.back().type == TOKEN_RBRACE)
-            t.type = TOKEN_SERVER;
-        else
-            t.type = TOKEN_ARGUMENT;
-    } 
-    else if (word == "listen") {
-        t.type = TOKEN_LISTEN;
-    } 
-    else if (word == "location") {
-        t.type = TOKEN_LOCATION;
-    } 
-    else if (word == "root") {
-        t.type = TOKEN_ROOT;
+        TokenType previous = _tokens.back().type;
+
+        if (previous == TOKEN_LBRACE || previous == TOKEN_SEMICOLON || previous == TOKEN_RBRACE)
+            at_statement_start = true;
     }
-    else if (word == "server_name") {
-    t.type = TOKEN_SERVER_NAME;
-    }
-    else if (word == "index") {
-        t.type = TOKEN_INDEX;
-    } 
-    else if (word == "error_page") {
-        t.type = TOKEN_ERROR_PAGE;
-    }
-    else if (word == "client_max_body_size") {
-        t.type = TOKEN_CLIENT_MAX_BODY_SIZE;
-    }
-    else if (word == "allowed_methods") {
-        t.type = TOKEN_ALLOWED_METHODS;
-    }
-    else if (word == "autoindex") {
-        t.type = TOKEN_AUTOINDEX;
-    }
-    else if (word == "return") {
-        t.type = TOKEN_RETURN;
-    }
-    else if (word == "upload")                 
-        t.type = TOKEN_UPLOAD;       // <-- ADDED
-    else if (word == "upload_path")            
-        t.type = TOKEN_UPLOAD_PATH;  // <-- ADDED
-    else if (word == "cgi")                    
-        t.type = TOKEN_CGI;
-    else {
+
+    bool at_server_start = _tokens.empty() || _tokens.back().type == TOKEN_RBRACE;
+
+    if (word == "server" && at_server_start)
+        t.type = TOKEN_SERVER;
+    else if (!at_statement_start)
         t.type = TOKEN_ARGUMENT;
-    }
+    else if (word == "listen")
+        t.type = TOKEN_LISTEN;
+    else if (word == "location")
+        t.type = TOKEN_LOCATION;
+    else if (word == "root")
+        t.type = TOKEN_ROOT;
+    else if (word == "server_name")
+        t.type = TOKEN_SERVER_NAME;
+    else if (word == "index")
+        t.type = TOKEN_INDEX;
+    else if (word == "error_page")
+        t.type = TOKEN_ERROR_PAGE;
+    else if (word == "client_max_body_size")
+        t.type = TOKEN_CLIENT_MAX_BODY_SIZE;
+    else if (word == "allowed_methods")
+        t.type = TOKEN_ALLOWED_METHODS;
+    else if (word == "autoindex")
+        t.type = TOKEN_AUTOINDEX;
+    else if (word == "return")
+        t.type = TOKEN_RETURN;
+    else if (word == "upload")
+        t.type = TOKEN_UPLOAD;
+    else if (word == "upload_path")
+        t.type = TOKEN_UPLOAD_PATH;
+    else if (word == "cgi")
+        t.type = TOKEN_CGI;
+    else
+        t.type = TOKEN_ARGUMENT;
+
     this->_tokens.push_back(t);
 }
 
