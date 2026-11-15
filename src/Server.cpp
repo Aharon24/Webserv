@@ -513,6 +513,8 @@ void Server::parse_and_respond(ClientConnection &client, HttpParser &http_parser
 bool Server::read_client_data(ClientConnection &client, bool &stop_processing)
 {
     char buffer[4096];
+    stop_processing = false;
+
 
     ssize_t bytes_read = recv(client.fd, buffer, sizeof(buffer), 0);
 
@@ -529,8 +531,21 @@ bool Server::read_client_data(ClientConnection &client, bool &stop_processing)
         static_cast<std::string::size_type>(bytes_read)
     );
 
-    stop_processing = false;
     return true;
+}
+
+bool Server::is_chunked(const std::string &headers_part) const
+{
+    std::string lower_headers = headers_part;
+
+    for (std::string::size_type i = 0; i < lower_headers.size(); ++i)
+    {
+        lower_headers[i] = static_cast<char>(
+            std::tolower(static_cast<unsigned char>(lower_headers[i]))
+        );
+    }
+
+    return lower_headers.find("transfer-encoding: chunked") != std::string::npos;
 }
 
 
@@ -548,14 +563,36 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
     const ServerConfig &conf = get_server_config(client);
 
     std::string headers_part = client.request_buffer.substr(0, header_end);
-    std::size_t content_length = get_content_length(headers_part);
-
-    if (check_max_body_size(client, content_length, conf))
-        return true;
-
     std::string::size_type body_start = header_end + 4;
-    if (client.request_buffer.size() - body_start < content_length)
-        return true;
+
+    if (is_chunked(headers_part))
+    {
+        std::string decoded_body;
+
+        ChunkedStatus chunked_status = HttpParser::unchunk_body(client.request_buffer.substr(body_start), decoded_body);
+
+        if (chunked_status == CHUNKED_INCOMPLETE)
+            return true;
+
+        if (chunked_status == CHUNKED_INVALID)
+        {
+            parse_and_respond(client, http_parser, conf);
+            return true;
+        }
+
+        if (check_max_body_size(client, decoded_body.size(), conf))
+            return true;
+    }
+    else
+    {
+        std::size_t content_length = get_content_length(headers_part);
+
+        if (check_max_body_size(client, content_length, conf))
+            return true;
+
+        if (client.request_buffer.size() - body_start < content_length)
+            return true;
+    }
 
     parse_and_respond(client, http_parser, conf);
     return true;

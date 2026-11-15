@@ -6,52 +6,133 @@
 #include <cctype>
 
 
-std::string HttpParser::unchunk_body(const std::string &chunked_body)
+
+
+bool  HttpParser::parse_hex_size(const std::string &size_line, std::size_t &out_chunk_size)
 {
-    std::string decoded_body = "";
-    std::string::size_type i = 0;
+    std::size_t chunk_size = 0;
 
-    while (i < chunked_body.size())
+    for (std::size_t j = 0; j < size_line.size(); ++j)
     {
-        std::string::size_type crlf = chunked_body.find("\r\n", i);
-        if (crlf == std::string::npos)
-            break;
+        unsigned int digit;
 
-        std::string hex_size_str = chunked_body.substr(i, crlf - i);
-        std::size_t chunk_size = 0;
+        if (size_line[j] >= '0' && size_line[j] <= '9')
+            digit = size_line[j] - '0';
+        else if (size_line[j] >= 'a' && size_line[j] <= 'f')
+            digit = size_line[j] - 'a' + 10;
+        else if (size_line[j] >= 'A' && size_line[j] <= 'F')
+            digit = size_line[j] - 'A' + 10;
+        else
+            return false;
 
-        std::stringstream ss;
-        ss << std::hex << hex_size_str;
-        ss >> chunk_size;
+        if (chunk_size > (static_cast<std::size_t>(-1) - digit) / 16)
+            return false;
 
-        if (chunk_size == 0)
-            break;
-        i = crlf + 2;
-        if (i + chunk_size > chunked_body.size())
-            break;
-        decoded_body.append(chunked_body, i, chunk_size);
-        i += chunk_size + 2;
+        chunk_size = chunk_size * 16 + digit;
     }
-    return decoded_body;
+
+    out_chunk_size = chunk_size;
+    return true;
 }
 
+ChunkedStatus  HttpParser::skip_trailers(const std::string &chunked_body, std::string::size_type &i)
+{
+    while (true)
+    {
+        std::string::size_type trailer_end = chunked_body.find("\r\n", i);
 
-void  HttpParser::parse_head(const std::string &line, HttpRequest &request, bool &host_found)
+        if (trailer_end == std::string::npos)
+            return CHUNKED_INCOMPLETE;
+
+        if (trailer_end == i)
+            return CHUNKED_COMPLETE;
+
+        std::string trailer = chunked_body.substr(i, trailer_end - i);
+
+        if (trailer.find(':') == std::string::npos)
+            return CHUNKED_INVALID;
+
+        i = trailer_end + 2;
+    }
+}
+
+ChunkedStatus HttpParser::unchunk_body(const std::string &chunked_body, std::string &decoded_body, std::size_t max_body_size)
+{
+    decoded_body.clear();
+    std::string::size_type i = 0;
+
+    while (true)
+    {
+        std::string::size_type crlf = chunked_body.find("\r\n", i);
+
+        if (crlf == std::string::npos)
+            return CHUNKED_INCOMPLETE;
+
+        std::string size_line = chunked_body.substr(i, crlf - i);
+
+        std::string::size_type extension = size_line.find(';');
+
+        if (extension != std::string::npos)
+            size_line.erase(extension);
+
+        if (size_line.empty())
+            return CHUNKED_INVALID;
+
+        std::size_t chunk_size = 0;
+        if (!parse_hex_size(size_line, chunk_size))
+            return CHUNKED_INVALID;
+
+        i = crlf + 2;
+
+        if (chunk_size == 0)
+        {
+            return skip_trailers(chunked_body, i);
+        }
+
+        if (max_body_size > 0 &&(decoded_body.size() > max_body_size || chunk_size > max_body_size - decoded_body.size()))
+            return CHUNKED_TOO_LARGE;
+
+        if (chunk_size > chunked_body.size() - i)
+            return CHUNKED_INCOMPLETE;
+
+
+        decoded_body.append(chunked_body, i, chunk_size);
+        i += chunk_size;
+
+        if (chunked_body.size() - i < 2)
+            return CHUNKED_INCOMPLETE;
+
+        if (chunked_body.compare(i, 2, "\r\n") != 0)
+            return CHUNKED_INVALID;
+
+        i += 2;
+    }
+}
+void HttpParser::parse_head(const std::string &line, HttpRequest &request, bool &host_found)
 {
     std::string::size_type colon = line.find(':');
+
     if (colon == std::string::npos || colon == 0)
         throw std::runtime_error("Invalid HTTP header");
+
     std::string name = line.substr(0, colon);
     std::string value = line.substr(colon + 1);
+
     for (std::size_t i = 0; i < name.size(); ++i)
     {
-        name[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(name[i])));
+        name[i] = static_cast<char>(
+            std::tolower(static_cast<unsigned char>(name[i]))
+        );
     }
+
     while (!value.empty() && (value[0] == ' ' || value[0] == '\t'))
         value.erase(0, 1);
-    while (!value.empty() && (value[value.size() - 1] == ' ' || value[value.size() - 1] == '\t'))
+
+    while (!value.empty() &&
+           (value[value.size() - 1] == ' ' ||
+            value[value.size() - 1] == '\t'))
         value.erase(value.size() - 1);
-    request.headers[name] = value;
+
     if (name == "host")
     {
         if (host_found)
@@ -59,11 +140,20 @@ void  HttpParser::parse_head(const std::string &line, HttpRequest &request, bool
 
         if (value.empty())
             throw std::runtime_error("Empty Host header");
+    }
 
+    if (request.headers.find(name) != request.headers.end())
+        throw std::runtime_error("Duplicate HTTP header: " + name);
+
+    if (name == "host")
+    {
         request.host = value;
         host_found = true;
     }
 
+    request.headers.insert(
+        std::map<std::string, std::string>::value_type(name, value)
+    );
 }
 
 HttpRequest HttpParser::parse(const std::string &raw_request)
@@ -109,6 +199,12 @@ HttpRequest HttpParser::parse(const std::string &raw_request)
     }
     if (request.version == "HTTP/1.1" && !host_found)
         throw std::runtime_error("Missing Host header");
+    bool has_transfer_encoding = request.headers.find("transfer-encoding") != request.headers.end();
+
+    bool has_content_length = request.headers.find("content-length") != request.headers.end();
+
+    if (has_transfer_encoding && has_content_length)
+        throw std::runtime_error("Transfer-Encoding and Content-Length cannot be used together");
     std::string::size_type body_pos = raw_request.find("\r\n\r\n");
     if (body_pos != std::string::npos)
         request.body = raw_request.substr(body_pos + 4);
@@ -119,18 +215,38 @@ HttpRequest HttpParser::parse(const std::string &raw_request)
             request.body = raw_request.substr(body_pos + 2);
     }
 
-    std::map<std::string, std::string>::iterator it = request.headers.find("transfer-encoding");
-    if (it != request.headers.end() && it->second.find("chunked") != std::string::npos)
-    {
-        request.body = unchunk_body(request.body);
-    }
-    if (request.method == "POST")
-    {
-        bool has_cl = (request.headers.find("content-length") != request.headers.end());
-        bool has_te = (request.headers.find("transfer-encoding") != request.headers.end());
-        if (!has_cl && !has_te)
-            throw std::runtime_error("411 Length Required");
-    }
+    std::map<std::string, std::string>::iterator it =
+    request.headers.find("transfer-encoding");
 
+    if (it != request.headers.end())
+    {
+        std::string transfer_encoding = it->second;
+
+        // Make Transfer-Encoding value lowercase
+        for (std::size_t i = 0; i < transfer_encoding.size(); ++i)
+        {
+            transfer_encoding[i] = static_cast<char>(
+                std::tolower(static_cast<unsigned char>(transfer_encoding[i]))
+            );
+        }
+
+        if (transfer_encoding != "chunked")
+            throw std::runtime_error("Unsupported Transfer-Encoding");
+
+        std::string decoded_body;
+
+        ChunkedStatus status = unchunk_body(request.body, decoded_body);
+
+        if (status == CHUNKED_INCOMPLETE)
+            throw std::runtime_error("Incomplete chunked body");
+
+        if (status == CHUNKED_INVALID)
+            throw std::runtime_error("Invalid chunked body");
+
+        if (status == CHUNKED_TOO_LARGE)
+            throw std::runtime_error("Chunked body too large");
+
+        request.body = decoded_body;
+    }
     return request;
 }

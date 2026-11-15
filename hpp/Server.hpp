@@ -7,6 +7,7 @@
 #include <cerrno>
 
 #include <cstring>
+#include <cctype>
 
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -40,7 +41,7 @@ struct ClientConnection
     bool response_ready;
     time_t last_activity;
 
-    ClientConnection(): fd(-1), listener_index(0),sent_bytes(0), request_complete(false), response_ready(false)
+    ClientConnection(): fd(-1), listener_index(0),sent_bytes(0), request_complete(false), response_ready(false), last_activity(time(NULL))
     {
     }
 
@@ -123,8 +124,7 @@ public:
 
 
     void check_timeouts(std::vector<ClientConnection> &clients, time_t timeout_seconds);
-    
-
+    bool is_chunked(const std::string &headers_part) const;
 
 };
 
