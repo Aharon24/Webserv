@@ -39,9 +39,10 @@ struct ClientConnection
     std::size_t sent_bytes;
     bool request_complete;
     bool response_ready;
+    bool header_too_large;
     time_t last_activity;
 
-    ClientConnection(): fd(-1), listener_index(0),sent_bytes(0), request_complete(false), response_ready(false), last_activity(time(NULL))
+    ClientConnection(): fd(-1), listener_index(0),sent_bytes(0), request_complete(false), response_ready(false), header_too_large(false), last_activity(time(NULL))
     {
     }
 
@@ -51,6 +52,7 @@ struct ClientConnection
           sent_bytes(0),
           request_complete(false),
           response_ready(false),
+          header_too_large(false),
           last_activity(time(NULL))
     {
     }
@@ -61,6 +63,7 @@ struct ClientConnection
         sent_bytes = 0;
         request_complete = false;
         response_ready = false;
+        header_too_large = false;
         last_activity = time(NULL);
     }
 };
@@ -126,6 +129,7 @@ public:
     void check_timeouts(std::vector<ClientConnection> &clients, time_t timeout_seconds);
     bool is_chunked(const std::string &headers_part) const;
 
+    void handle_large_header(ClientConnection &client);
 };
 
 #endif

@@ -70,7 +70,7 @@ struct ServerConfig
     std::map<int, std::string> error_pages;
     
     std::vector<LocationConfig> locations;
-    int return_code;
+    int return_code; 
 
     ServerConfig()
         : ip(""),
@@ -78,7 +78,8 @@ struct ServerConfig
           server_name(""),
           root(""),
           index("index.html"),
-          client_max_body_size(1024 * 1024)
+          client_max_body_size(1024 * 1024),
+          return_code(0)
     {
     }
 };

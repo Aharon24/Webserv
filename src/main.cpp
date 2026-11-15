@@ -59,7 +59,7 @@ void print_conf(const std::vector<ServerConfig> &configs)
 
 }
 
-void init_webserv(std::string &path)
+int init_webserv(std::string &path)
 {
     webserv web(path);
     Tokenizer Tok;
@@ -96,8 +96,9 @@ void init_webserv(std::string &path)
     catch (const std::exception& e)
     {
         std::cerr << "Config error: " << e.what() << std::endl;
-        return ;
+        return  1;
     }
+    return (0);
 }
    
 
@@ -113,6 +114,6 @@ int main(int argc, char *argv[])
         std::cout << "Error wrong argument" << std::endl;  
         return 1;
     }
-    init_webserv(path);
+    return (init_webserv(path));
 }
 

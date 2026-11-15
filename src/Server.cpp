@@ -84,7 +84,7 @@ int Server::accept_connection(int server_fd)
 
     if (client_fd == -1)
     {
-        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNABORTED)
             return -1;
         throw std::runtime_error("Failed to accept connection");
     }
@@ -95,7 +95,7 @@ int Server::accept_connection(int server_fd)
     catch (...)
     {
         close(client_fd);
-        throw;
+        return -1;
     }
     return client_fd;
 }
@@ -512,9 +512,10 @@ void Server::parse_and_respond(ClientConnection &client, HttpParser &http_parser
 
 bool Server::read_client_data(ClientConnection &client, bool &stop_processing)
 {
+    const std::size_t MAX_HEADER_SIZE = 32 * 1024;
+
     char buffer[4096];
     stop_processing = false;
-
 
     ssize_t bytes_read = recv(client.fd, buffer, sizeof(buffer), 0);
 
@@ -522,7 +523,10 @@ bool Server::read_client_data(ClientConnection &client, bool &stop_processing)
         return false;
 
     if (bytes_read < 0)
-        return false;
+    {
+        stop_processing = true;
+        return true;
+    }
 
     client.last_activity = time(NULL);
 
@@ -530,6 +534,22 @@ bool Server::read_client_data(ClientConnection &client, bool &stop_processing)
         buffer,
         static_cast<std::string::size_type>(bytes_read)
     );
+
+    std::string::size_type header_end = client.request_buffer.find("\r\n\r\n");
+
+    if (header_end == std::string::npos)
+    {
+        if (client.request_buffer.size() > MAX_HEADER_SIZE)
+        {
+            client.header_too_large = true;
+            stop_processing = true;
+        }
+    }
+    else if (header_end + 4 > MAX_HEADER_SIZE)
+    {
+        client.header_too_large = true;
+        stop_processing = true;
+    }
 
     return true;
 }
@@ -549,11 +569,31 @@ bool Server::is_chunked(const std::string &headers_part) const
 }
 
 
+void Server::handle_large_header(ClientConnection &client)
+{
+    HttpRequest dummy_req;
+    dummy_req.version = "HTTP/1.1";
+
+    std::string status = "431 Request Header Fields Too Large";
+    std::string body = status + "\n";
+
+    client.response_buffer =
+        create_response_data(dummy_req, status, body) + body;
+
+    client.request_complete = true;
+    client.response_ready = true;
+}
+
 bool Server::handle_client_event(ClientConnection &client, HttpParser &http_parser)
 {
     bool stop_processing = false;
     if (!read_client_data(client, stop_processing))
         return false;
+    if (client.header_too_large)
+    {
+        handle_large_header(client);
+        return true;
+    }
     if (stop_processing)
         return true;
 
