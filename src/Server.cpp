@@ -204,51 +204,15 @@ void Server::handle_post(const HttpRequest &request, std::string &status, std::s
 }
 
 /*
-** ============================================================
-** HTTP DELETE - TODO
-** 42 Webserv | Programmer 4
-** ============================================================
-**
-** TODO 1: Configuration
-** [ ] Receive the current ServerConfig.
-** [ ] Find the matching LocationConfig.
-** [ ] Check whether DELETE is allowed.
-**
-** TODO 2: Resolve target
-** [ ] Use the existing build_file_path().
-** [ ] Prevent path traversal.
-** [ ] Prevent deletion outside the allowed root.
-**
-** TODO 3: Validate target
-** [ ] Check whether the target exists.
-** [ ] Reject directories.
-** [ ] Handle inaccessible targets.
-**
-** TODO 4: Delete file
-** [ ] Call unlink().
-** [ ] Check the return value.
-** [ ] Handle errno correctly.
-**
-** TODO 5: HTTP response
-** [ ] Return 204 No Content on success.
-** [ ] Return 404 for a missing resource.
-** [ ] Return 403 for a forbidden operation.
-** [ ] Handle other filesystem errors.
-**
-** TODO 6: Tests
-** [ ] Delete an existing file.
-** [ ] Delete a nonexistent file.
-** [ ] Attempt to delete a directory.
-** [ ] Attempt path traversal.
-** [ ] Attempt DELETE in a forbidden location.
-** [ ] Verify that other files remain untouched.
-**
-** RULES:
-** - C++98 only.
-** - Preserve existing code where possible.
-** - No recursive directory deletion.
-** - Do not modify unrelated modules.
-** ============================================================
+** DELETE integration TODO:
+** - HttpParser::parse(): validate bytes, decode URI once and normalize paths.
+** - Server::find_location(): match trailing-slash locations and normalized paths.
+** - Server::build_response()/build_file_path(): use the same normalized path;
+**   replace substring ".." checks with component checks in the shared router.
+** - Server::create_response_data(): add Allow for 405; omit Content-Length for 204.
+** - Verify lstat() against the official subject's allowed functions.
+** - TOCTOU: lstat() + unlink() requires a stable directory tree. Review permitted
+**   descriptor-relative APIs before claiming safety against concurrent changes.
 */
 
 void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,std::string &status, std::string &body)
@@ -272,8 +236,7 @@ void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,
         }
     }
 
-    if (request.path.empty() || request.path[0] != '/'
-        || request.path.find("..") != std::string::npos)
+    if (request.path.empty() || request.path[0] != '/')
     {
         status = "403 Forbidden";
         body = "403 Forbidden\n";
@@ -304,8 +267,75 @@ void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,
         return;
     }
 
+    // C filesystem calls must see the complete mapped path.
+    if (file_path.find('\0') != std::string::npos)
+    {
+        status = "400 Bad Request";
+        body = "400 Bad Request\n";
+        return;
+    }
+
+    // Reject parent components in the mapped suffix without decoding the URI.
+    const std::string relative_path = file_path.substr(normalized_root.size());
+    std::size_t start = 0;
+    while (start < relative_path.size())
+    {
+        std::size_t end = relative_path.find('/', start);
+        if (end == std::string::npos)
+            end = relative_path.size();
+        if (relative_path.substr(start, end - start) == "..")
+        {
+            status = "403 Forbidden";
+            body = "403 Forbidden\n";
+            return;
+        }
+        start = end + 1;
+    }
+
+    if (file_path.find_first_not_of('/') == std::string::npos)
+    {
+        status = "403 Forbidden";
+        body = "403 Forbidden\n";
+        return;
+    }
+
+    // Inspect every prefix, including the configured root, without following links.
+    // This check does not prevent another process from replacing a directory.
     struct stat info;
-    if (stat(file_path.c_str(), &info) == -1)
+    bool checked = false;
+    start = 0;
+    while (start < file_path.size())
+    {
+        std::size_t end = file_path.find('/', start);
+        if (end == std::string::npos)
+            end = file_path.size();
+        if (end == start)
+        {
+            start = end + 1;
+            continue;
+        }
+        const std::string prefix = file_path.substr(0, end);
+        if (lstat(prefix.c_str(), &info) == -1)
+        {
+            checked = false;
+            break;
+        }
+        if (S_ISLNK(info.st_mode))
+        {
+            status = "403 Forbidden";
+            body = "403 Forbidden\n";
+            return;
+        }
+        if (end < file_path.size() && !S_ISDIR(info.st_mode))
+        {
+            status = "404 Not Found";
+            body = "404 Not Found\n";
+            return;
+        }
+        checked = true;
+        start = end + 1;
+    }
+    if (!checked)
     {
         if (errno == ENOENT || errno == ENOTDIR)
             status = "404 Not Found";
