@@ -12,6 +12,8 @@ bool  HttpParser::parse_hex_size(const std::string &size_line, std::size_t &out_
 {
     std::size_t chunk_size = 0;
 
+    if (size_line.empty())
+        return false;
     for (std::size_t j = 0; j < size_line.size(); ++j)
     {
         unsigned int digit;
@@ -108,6 +110,7 @@ ChunkedStatus HttpParser::unchunk_body(const std::string &chunked_body, std::str
         i += 2;
     }
 }
+
 void HttpParser::parse_head(const std::string &line, HttpRequest &request, bool &host_found)
 {
     std::string::size_type colon = line.find(':');

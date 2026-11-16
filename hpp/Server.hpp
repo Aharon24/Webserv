@@ -8,6 +8,7 @@
 
 #include <cstring>
 #include <cctype>
+#include <limits>
 
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -100,7 +101,7 @@ public:
     void remove_client(int client_fd, std::vector<ClientConnection> &clients);
     bool handle_client_event(ClientConnection &client, HttpParser &parser);
 
-    std::size_t get_content_length(const std::string &headers_part) const;
+    bool get_content_length(const std::string &headers_part, std::size_t &content_length) const;    
     bool check_max_body_size(ClientConnection &client, std::size_t content_length, const ServerConfig &conf);
     void parse_and_respond(ClientConnection &client, HttpParser &http_parser, const ServerConfig &conf);
     bool read_client_data(ClientConnection &client, bool &stop_processing);

@@ -229,6 +229,7 @@ FILE: hpp/Server.hpp
 
 #include <cstring>
 #include <cctype>
+#include <limits>
 
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -321,7 +322,7 @@ public:
     void remove_client(int client_fd, std::vector<ClientConnection> &clients);
     bool handle_client_event(ClientConnection &client, HttpParser &parser);
 
-    std::size_t get_content_length(const std::string &headers_part) const;
+    bool get_content_length(const std::string &headers_part, std::size_t &content_length) const;    
     bool check_max_body_size(ClientConnection &client, std::size_t content_length, const ServerConfig &conf);
     void parse_and_respond(ClientConnection &client, HttpParser &http_parser, const ServerConfig &conf);
     bool read_client_data(ClientConnection &client, bool &stop_processing);
@@ -527,6 +528,8 @@ bool  HttpParser::parse_hex_size(const std::string &size_line, std::size_t &out_
 {
     std::size_t chunk_size = 0;
 
+    if (size_line.empty())
+        return false;
     for (std::size_t j = 0; j < size_line.size(); ++j)
     {
         unsigned int digit;
@@ -623,6 +626,7 @@ ChunkedStatus HttpParser::unchunk_body(const std::string &chunked_body, std::str
         i += 2;
     }
 }
+
 void HttpParser::parse_head(const std::string &line, HttpRequest &request, bool &host_found)
 {
     std::string::size_type colon = line.find(':');
@@ -2095,23 +2099,85 @@ void Server::remove_client(int client_fd, std::vector<ClientConnection> &clients
 }
 
 
-std::size_t Server::get_content_length(const std::string &headers_part) const
-{
-   std::string::size_type cl_pos = headers_part.find("Content-Length:");
-    if (cl_pos == std::string::npos)
-        cl_pos = headers_part.find("content-length:");
 
-    if (cl_pos != std::string::npos)
+bool Server::get_content_length(const std::string &headers_part,std::size_t &content_length) const
+{
+    content_length = 0;
+    bool found = false;
+    std::string::size_type line_start = 0;
+
+    while (line_start < headers_part.size())
     {
-        std::string::size_type colon = headers_part.find(':', cl_pos);
-        if (colon != std::string::npos)
+        std::string::size_type line_end = headers_part.find("\r\n", line_start);
+
+        if (line_end == std::string::npos)
+            line_end = headers_part.size();
+
+        std::string::size_type colon = headers_part.find(':', line_start);
+
+        if (colon != std::string::npos && colon < line_end)
         {
-            std::string length_str = headers_part.substr(colon + 1);
-            return static_cast<std::size_t>(std::atoi(length_str.c_str()));
+            std::string name = headers_part.substr(line_start, colon - line_start);
+
+            for (std::string::size_type i = 0; i < name.size(); ++i)
+            {
+                if (name[i] >= 'A' && name[i] <= 'Z')
+                    name[i] = name[i] - 'A' + 'a';
+            }
+
+            if (name == "content-length")
+            {
+                if (found)
+                    return false;
+
+                found = true;
+
+                std::string::size_type start = colon + 1;
+
+                while (start < line_end &&
+                       (headers_part[start] == ' ' ||
+                        headers_part[start] == '\t'))
+                    ++start;
+
+                std::string::size_type end = line_end;
+
+                while (end > start && (headers_part[end - 1] == ' ' || headers_part[end - 1] == '\t'))
+                    --end;
+
+                if (start == end)
+                    return false;
+
+                std::size_t value = 0;
+
+                for (std::string::size_type i = start; i < end; ++i)
+                {
+                    if (headers_part[i] < '0' ||
+                        headers_part[i] > '9')
+                        return false;
+
+                    std::size_t digit =
+                        static_cast<std::size_t>(headers_part[i] - '0');
+
+                    if (value >
+                        (std::numeric_limits<std::size_t>::max() - digit) / 10)
+                        return false;
+
+                    value = value * 10 + digit;
+                }
+
+                content_length = value;
+            }
         }
+
+        if (line_end == headers_part.size())
+            break;
+
+        line_start = line_end + 2;
     }
-    return 0;
+
+    return true;
 }
+
 
 
 bool Server::check_max_body_size(ClientConnection &client, std::size_t content_length, const ServerConfig &conf)
@@ -2216,16 +2282,78 @@ bool Server::read_client_data(ClientConnection &client, bool &stop_processing)
 
 bool Server::is_chunked(const std::string &headers_part) const
 {
-    std::string lower_headers = headers_part;
+    std::string::size_type line_start = 0;
 
-    for (std::string::size_type i = 0; i < lower_headers.size(); ++i)
+    while (line_start < headers_part.size())
     {
-        lower_headers[i] = static_cast<char>(
-            std::tolower(static_cast<unsigned char>(lower_headers[i]))
-        );
+        std::string::size_type line_end = headers_part.find("\r\n", line_start);
+
+        if (line_end == std::string::npos)
+            line_end = headers_part.size();
+
+        std::string::size_type colon = headers_part.find(':', line_start);
+
+        if (colon != std::string::npos && colon < line_end)
+        {
+            std::string name = headers_part.substr(line_start, colon - line_start);
+
+            for (std::string::size_type i = 0; i < name.size(); ++i)
+            {
+                if (name[i] >= 'A' && name[i] <= 'Z')
+                    name[i] = name[i] - 'A' + 'a';
+            }
+
+            if (name == "transfer-encoding")
+            {
+                std::string::size_type token_start = colon + 1;
+
+                while (token_start < line_end)
+                {
+                    std::string::size_type comma_pos =
+                        headers_part.find(',', token_start);
+
+                    if (comma_pos == std::string::npos || comma_pos > line_end)
+                        comma_pos = line_end;
+
+                    std::string::size_type token_end = comma_pos;
+
+                    while (token_start < token_end && (headers_part[token_start] == ' ' || headers_part[token_start] == '\t'))
+                        ++token_start;
+
+                    while (token_end > token_start &&
+                           (headers_part[token_end - 1] == ' ' ||
+                            headers_part[token_end - 1] == '\t'))
+                        --token_end;
+
+                    std::string token =
+                        headers_part.substr(
+                            token_start, token_end - token_start);
+
+                    for (std::string::size_type i = 0;
+                         i < token.size(); ++i)
+                    {
+                        if (token[i] >= 'A' && token[i] <= 'Z')
+                            token[i] = token[i] - 'A' + 'a';
+                    }
+
+                    if (token == "chunked")
+                        return true;
+
+                    if (comma_pos == line_end)
+                        break;
+
+                    token_start = comma_pos + 1;
+                }
+            }
+        }
+
+        if (line_end == headers_part.size())
+            break;
+
+        line_start = line_end + 2;
     }
 
-    return lower_headers.find("transfer-encoding: chunked") != std::string::npos;
+    return false;
 }
 
 
@@ -2269,7 +2397,7 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
     {
         std::string decoded_body;
 
-        ChunkedStatus chunked_status = HttpParser::unchunk_body(client.request_buffer.substr(body_start), decoded_body);
+        ChunkedStatus chunked_status = HttpParser::unchunk_body(client.request_buffer.substr(body_start), decoded_body, conf.client_max_body_size);
 
         if (chunked_status == CHUNKED_INCOMPLETE)
             return true;
@@ -2279,13 +2407,44 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
             parse_and_respond(client, http_parser, conf);
             return true;
         }
+        if (chunked_status == CHUNKED_TOO_LARGE)
+        {
+            HttpRequest dummy_req;
+            dummy_req.version = "HTTP/1.1";
+
+            std::string status = "413 Payload Too Large";
+            std::string body = status + "\n";
+
+            client.response_buffer =
+                create_response_data(dummy_req, status, body) + body;
+
+            client.request_complete = true;
+            client.response_ready = true;
+            return true;
+        }
 
         if (check_max_body_size(client, decoded_body.size(), conf))
             return true;
     }
     else
     {
-        std::size_t content_length = get_content_length(headers_part);
+        std::size_t content_length = 0;
+
+        if (!get_content_length(headers_part, content_length))
+        {
+            HttpRequest dummy_req;
+            dummy_req.version = "HTTP/1.1";
+
+            std::string status = "400 Bad Request";
+            std::string body = status + "\n";
+
+            client.response_buffer =
+                create_response_data(dummy_req, status, body) + body;
+
+            client.request_complete = true;
+            client.response_ready = true;
+            return true;
+        }
 
         if (check_max_body_size(client, content_length, conf))
             return true;
@@ -2474,7 +2633,7 @@ void Server::process_client_events(const std::vector<struct pollfd> &fds, std::v
         if (events & POLLERR)
             keep_client = false;
 
-        if ((events & POLLHUP) && !(events & POLLIN) && !it->response_ready)
+        if ((events & POLLHUP) && !(events & POLLIN) && !(events & POLLOUT))
             keep_client = false;
 
         if (!keep_client)
