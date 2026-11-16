@@ -193,6 +193,96 @@ void Server::handle_get(const HttpRequest &request,const ServerConfig &conf,std:
         status = "200 OK";
     }
 }
+
+
+**
+** PURPOSE:
+** Handle HTTP POST requests and save uploaded files using
+** the existing Upload module.
+**
+** TODO 1: Upload module
+** [x] Implement Upload::save_file().
+** [x] Implement Upload::parse_multipart().
+** [x] Support binary data and empty files.
+** [x] Validate filenames and destination directories.
+** [ ] Complete standalone Upload tests.
+**
+** TODO 2: HTTP request body (TEAM)
+** [ ] Ensure exact Content-Length body extraction.
+** [ ] Reject invalid Content-Length / Transfer-Encoding combinations.
+** [ ] Decode chunked bodies exactly once.
+** [ ] Enforce client_max_body_size.
+** [ ] Ensure POST receives the complete validated request.body.
+**
+** TODO 3: POST configuration
+** [ ] Pass ServerConfig to handle_post().
+** [ ] Find the matching LocationConfig.
+** [ ] Check allowed_methods for POST.
+** [ ] Check upload_enabled.
+** [ ] Validate upload_path.
+**
+** TODO 4: Multipart integration
+** [ ] Read Content-Type from request.headers.
+** [ ] Validate multipart/form-data.
+** [ ] Call Upload::parse_multipart().
+** [ ] Reject malformed multipart requests.
+** [ ] Reject multipart requests without files.
+** [ ] Detect duplicate filenames within one request.
+**
+** TODO 5: File storage
+** [ ] Call Upload::save_file() for each uploaded file.
+** [ ] Allow valid empty files.
+** [ ] Never overwrite existing files.
+** [ ] Track files created by the current request.
+** [ ] Roll back created files if any upload fails.
+** [ ] Handle filesystem errors using errno.
+** [ ] Confirm file I/O compatibility with the event loop.
+**
+** TODO 6: HTTP responses
+** [ ] Return 201 Created after successful upload.
+** [ ] Return 400 Bad Request for invalid multipart data.
+** [ ] Return 403 Forbidden when uploading is disabled.
+** [ ] Return 405 Method Not Allowed when POST is not allowed.
+** [ ] Return 409 Conflict when a filename already exists.
+** [ ] Return 413 Payload Too Large when size limits are exceeded.
+** [ ] Return 415 Unsupported Media Type for unsupported Content-Type.
+** [ ] Return 500 Internal Server Error for unexpected storage errors.
+** [ ] Coordinate response headers with the shared Response module.
+**
+** TODO 7: Integration tests
+** [ ] Upload a normal text file.
+** [ ] Upload a binary file containing '\0'.
+** [ ] Upload an empty file.
+** [ ] Upload multiple files.
+** [ ] Test malformed multipart data.
+** [ ] Test duplicate and unsafe filenames.
+** [ ] Test an existing destination filename.
+** [ ] Test disabled upload and forbidden POST.
+** [ ] Test Content-Length and chunked requests.
+** [ ] Test client_max_body_size.
+** [ ] Test rollback when the second file fails.
+** [ ] Verify that unrelated files remain unchanged.
+** [ ] Test concurrent clients during file uploads.
+**
+** RULES:
+** - C++98 only (-Wall -Wextra -Werror -std=c++98).
+** - Preserve the existing architecture and coding style.
+** - Reuse Upload.cpp; do not duplicate multipart parsing.
+** - Do not duplicate HTTP parsing or socket handling.
+** - Do not modify teammates' modules without coordination.
+** - No temporary workarounds or incomplete solutions.
+** - Add meaningful comments in English.
+** - Mark TODO items complete only after verification.
+** ============================================================
+*/
+
+
+/**
+request.method;                  // "POST"
+request.path;                    // "/uploads"
+request.body;                    // Complete, correctly framed body
+request.headers["content-type"]; // Multipart Content-Type
+*/
 void Server::handle_post(const HttpRequest &request, std::string &status, std::string &body)
 {
         
