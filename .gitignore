@@ -7,6 +7,7 @@
 *.dylib
 *.out
 /webserv
+/test_parse
 /build/
 /dist/
 /obj/
@@ -30,3 +31,4 @@ Thumbs.db
 *~
 .vscode/
 .idea/
+tmp/
