@@ -195,6 +195,7 @@ void Server::handle_get(const HttpRequest &request,const ServerConfig &conf,std:
 }
 
 
+/*
 **
 ** PURPOSE:
 ** Handle HTTP POST requests and save uploaded files using
@@ -283,15 +284,63 @@ request.path;                    // "/uploads"
 request.body;                    // Complete, correctly framed body
 request.headers["content-type"]; // Multipart Content-Type
 */
-void Server::handle_post(const HttpRequest &request, std::string &status, std::string &body)
+
+
+/**
+
+    location->allowed_methods; // Must include "POST"
+    location->upload_enabled;  // Must be true
+    location->upload_path;     // Must be a valid directory path
+    location->root;            // Used to resolve relative upload_path
+    location->path;            // Used to resolve relative upload_path
+    location->return_code;     // Optional redirect for POST
+    location->return_url;      // Optional redirect for POST
+*/
+
+void Server::handle_post(const HttpRequest &request,
+    const ServerConfig &conf,
+    std::string &status, std::string &body)
 {
-        
+    // Find the location matching the request URI.
+    const LocationConfig *location = find_location(request.path, conf);
+
     std::cout << "POST method received!" << std::endl;
     std::cout << "Request path: " << request.path << std::endl;
+
+    if (location != NULL)
+        std::cout << "Location found: " << location->path << std::endl;
+    else
+        std::cout << "Location not found" << std::endl;
+
+    if (location != NULL && !location->allowed_methods.empty())
+    {
+        bool allowed = false;
+    
+        for(std::size_t i = 0; i < location->allowed_methods.size(); ++i)
+        {
+            if (location->allowed_methods[i] == "POST")
+            {
+                allowed = true;
+                break;
+            }
+        }
+    
+    
+        if (!allowed)
+        {
+            status = "405 Method Not Allowed";
+            body = "405 Method Not Allowed\n";
+            return;
+        }
+    }
 
     status = "501 Not Implemented";
     body = "POST is not implemented yet\n";
 }
+
+
+
+
 
 /*
 ** DELETE integration TODO:
@@ -500,7 +549,7 @@ std::string Server::build_response(const HttpRequest &request,const ServerConfig
     else if (request.method == "GET")
         handle_get(request, conf, status, body);
     else if (request.method == "POST")
-        handle_post(request, status, body);
+        handle_post(request, conf, status, body);
     else if (request.method == "DELETE")
         handle_delete(request, conf, status, body);
     else
