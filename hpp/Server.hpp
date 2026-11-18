@@ -3,6 +3,7 @@
 
 #include "ServerConfig.hpp"
 #include "HttpRequest.hpp"
+#include "CgiHandler.hpp"
 
 #include <cerrno>
 
@@ -37,13 +38,15 @@ struct ClientConnection
     std::string request_buffer;
     std::string response_buffer;
 
+
     std::size_t sent_bytes;
     bool request_complete;
     bool response_ready;
     bool header_too_large;
+    bool cgi_pending;
     time_t last_activity;
 
-    ClientConnection(): fd(-1), listener_index(0),sent_bytes(0), request_complete(false), response_ready(false), header_too_large(false), last_activity(time(NULL))
+    ClientConnection(): fd(-1), listener_index(0),sent_bytes(0), request_complete(false), response_ready(false), header_too_large(false),cgi_pending(false),last_activity(time(NULL))
     {
     }
 
@@ -54,6 +57,7 @@ struct ClientConnection
           request_complete(false),
           response_ready(false),
           header_too_large(false),
+          cgi_pending(false),
           last_activity(time(NULL))
     {
     }
@@ -65,6 +69,7 @@ struct ClientConnection
         request_complete = false;
         response_ready = false;
         header_too_large = false;
+        cgi_pending = false;
         last_activity = time(NULL);
     }
 };
@@ -79,6 +84,8 @@ private:
     std::vector<ListenConfig> _listens;
     std::vector<std::size_t> _listen_config_indices;
 
+    std::vector<CgiHandler *> _cgi_processes;
+
 
     const LocationConfig *find_location(const std::string &path, const ServerConfig &conf) const;
     std::string build_file_path(const HttpRequest &request,const LocationConfig *location,const ServerConfig &conf) const;
@@ -87,6 +94,11 @@ private:
     void set_nonblocking(int fd);
     std::string build_response(const HttpRequest &request,const ServerConfig &conf);
     const ServerConfig *find_server_config(const std::string &host) const;
+
+    // CGI
+    bool start_cgi(ClientConnection &client, const HttpRequest &request, const ServerConfig &conf);
+    void process_cgi_events(const std::vector<struct pollfd> &fds, std::vector<ClientConnection> &clients);
+    void remove_cgi_for_client(int client_fd);
 
 
 public:
@@ -116,7 +128,7 @@ public:
     std::vector<struct pollfd> build_poll_fds(const std::vector<ClientConnection> &clients) const;
     void accept_ready_connections(const std::vector<struct pollfd> &fds, std::vector<ClientConnection> &clients);
     int wait_for_events(std::vector<struct pollfd> &fds, int timeout_ms) const;
-    void process_client_events(const std::vector<struct pollfd> &fds, std::vector<ClientConnection> &clients, HttpParser &parser);
+    void process_client_events(const std::vector<struct pollfd> &fds,std::vector<ClientConnection> &clients,HttpParser &parser,std::size_t polled_client_count);
 
     void collect_listens();
 

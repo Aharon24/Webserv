@@ -615,6 +615,8 @@ void Server::parse_and_respond(ClientConnection &client, HttpParser &http_parser
         std::cout << "Path:    " << request.path << std::endl;
         std::cout << "Version: " << request.version << std::endl;
         std::cout << "Host:    " << request.host << std::endl;
+        std::cout << "Path: [" << request.path << "]" << std::endl;
+        std::cout << "Query: [" << request.query_string << "]" << std::endl;
         std::cout << "========================" << std::endl;
 
         client.response_buffer = build_response(request, conf);
@@ -945,22 +947,70 @@ std::vector<struct pollfd> Server::build_poll_fds(const std::vector<ClientConnec
     for (std::size_t i = 0; i < _server_fds.size(); ++i)
     {
         struct pollfd server_poll;
+
         server_poll.fd = _server_fds[i];
         server_poll.events = POLLIN;
         server_poll.revents = 0;
+
         fds.push_back(server_poll);
     }
 
     for (std::size_t i = 0; i < clients.size(); ++i)
     {
         struct pollfd client_poll;
+
         client_poll.fd = clients[i].fd;
-        client_poll.events = clients[i].response_ready ? POLLOUT : POLLIN;
+
+        if (clients[i].cgi_pending)
+            client_poll.events = 0;
+        else if (clients[i].response_ready)
+            client_poll.events = POLLOUT;
+        else
+            client_poll.events = POLLIN;
+
         client_poll.revents = 0;
+
         fds.push_back(client_poll);
+    }
+    for (std::size_t i = 0; i < _cgi_processes.size(); ++i)
+    {
+        CgiHandler *cgi = _cgi_processes[i];
+
+        int stdin_fd = -1;
+        int stdout_fd = -1;
+
+        if (cgi != NULL)
+        {
+            stdin_fd = cgi->get_stdin_fd();
+            stdout_fd = cgi->get_stdout_fd();
+        }
+
+        struct pollfd input_poll;
+
+        input_poll.fd = stdin_fd;
+        input_poll.events = 0;
+        input_poll.revents = 0;
+
+        if (stdin_fd != -1)
+            input_poll.events = POLLOUT;
+
+        fds.push_back(input_poll);
+
+        struct pollfd output_poll;
+
+        output_poll.fd = stdout_fd;
+        output_poll.events = 0;
+        output_poll.revents = 0;
+
+        if (stdout_fd != -1)
+            output_poll.events = POLLIN;
+
+        fds.push_back(output_poll);
     }
     return fds;
 }
+
+
 
 
 void Server::accept_ready_connections(const std::vector<struct pollfd> &fds, std::vector<ClientConnection> &clients)
@@ -1009,14 +1059,16 @@ int Server::wait_for_events(std::vector<struct pollfd> &fds, int timeout_ms) con
     return result;
 }
 
-void Server::process_client_events(const std::vector<struct pollfd> &fds, std::vector<ClientConnection> &clients, HttpParser &parser)
+void Server::process_client_events(const std::vector<struct pollfd> &fds,std::vector<ClientConnection> &clients,HttpParser &parser,std::size_t polled_client_count)
 {
-    for (std::size_t i = _server_fds.size(); i < fds.size(); ++i)
+    for (std::size_t i = _server_fds.size(); i < _server_fds.size() + polled_client_count && i < fds.size(); ++i)
     {
         int client_fd = fds[i].fd;
         short events = fds[i].revents;
+
         if (events == 0)
             continue;
+
         std::vector<ClientConnection>::iterator it = clients.begin();
 
         while (it != clients.end() && it->fd != client_fd)
@@ -1030,7 +1082,9 @@ void Server::process_client_events(const std::vector<struct pollfd> &fds, std::v
             remove_client(client_fd, clients);
             continue;
         }
+
         bool keep_client = true;
+
         if (events & POLLIN)
             keep_client = handle_client_event(*it, parser);
 
@@ -1069,20 +1123,29 @@ void Server::run(HttpParser &parser)
 {
     std::vector<ClientConnection> clients;
     const time_t TIMEOUT_SECONDS = 5;
+
     while (true)
     {
         check_timeouts(clients, TIMEOUT_SECONDS);
 
-        std::vector<struct pollfd> fds;
+        std::size_t polled_client_count = clients.size();
 
+        std::vector<struct pollfd> fds;
         fds = build_poll_fds(clients);
 
         int result = wait_for_events(fds, 1000);
+
         if (result <= 0)
-            continue;       
+            continue;
+
         accept_ready_connections(fds, clients);
-        
-        process_client_events(fds, clients, parser);
+
+        process_client_events(
+            fds,
+            clients,
+            parser,
+            polled_client_count
+        );
     }
 }
 
