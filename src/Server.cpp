@@ -316,9 +316,9 @@ void Server::handle_post(const HttpRequest &request,
 ** - Server::build_response()/build_file_path(): use the same normalized path;
 **   replace substring ".." checks with component checks in the shared router.
 ** - Server::create_response_data(): add Allow for 405; omit Content-Length for 204.
-** - Verify lstat() against the official subject's allowed functions.
-** - TOCTOU: lstat() + unlink() requires a stable directory tree. Review permitted
-**   descriptor-relative APIs before claiming safety against concurrent changes.
+** - Confirm std::remove() permission under the subject's external-function list.
+** - stat() follows symlinks: lexical root checks do not prevent symlink escapes.
+** - TOCTOU remains between stat() and std::remove(); review permitted APIs.
 */
 
 void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,std::string &status, std::string &body)
@@ -363,6 +363,10 @@ void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,
     const std::string file_path = build_file_path(request, location, conf);
 
     std::string normalized_root = root;
+    // Match the trailing-slash handling used by Router::build_path().
+    while (normalized_root.size() > 1
+        && normalized_root[normalized_root.size() - 1] == '/')
+        normalized_root.erase(normalized_root.size() - 1);
     if (normalized_root[normalized_root.size() - 1] != '/')
         normalized_root += '/';
 
@@ -405,43 +409,9 @@ void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,
         return;
     }
 
-    // Inspect every prefix, including the configured root, without following links.
-    // This check does not prevent another process from replacing a directory.
+    // stat() follows symlinks; the root prefix above is only a lexical check.
     struct stat info;
-    bool checked = false;
-    start = 0;
-    while (start < file_path.size())
-    {
-        std::size_t end = file_path.find('/', start);
-        if (end == std::string::npos)
-            end = file_path.size();
-        if (end == start)
-        {
-            start = end + 1;
-            continue;
-        }
-        const std::string prefix = file_path.substr(0, end);
-        if (lstat(prefix.c_str(), &info) == -1)
-        {
-            checked = false;
-            break;
-        }
-        if (S_ISLNK(info.st_mode))
-        {
-            status = "403 Forbidden";
-            body = "403 Forbidden\n";
-            return;
-        }
-        if (end < file_path.size() && !S_ISDIR(info.st_mode))
-        {
-            status = "404 Not Found";
-            body = "404 Not Found\n";
-            return;
-        }
-        checked = true;
-        start = end + 1;
-    }
-    if (!checked)
+    if (stat(file_path.c_str(), &info) == -1)
     {
         if (errno == ENOENT || errno == ENOTDIR)
             status = "404 Not Found";
@@ -460,7 +430,7 @@ void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,
         return;
     }
 
-    if (unlink(file_path.c_str()) == -1)
+    if (std::remove(file_path.c_str()) != 0)
     {
         if (errno == ENOENT || errno == ENOTDIR)
             status = "404 Not Found";
