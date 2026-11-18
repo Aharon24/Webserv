@@ -325,7 +325,6 @@ void Server::handle_post(const HttpRequest &request,
             }
         }
     
-    
         if (!allowed)
         {
             status = "405 Method Not Allowed";
@@ -333,6 +332,24 @@ void Server::handle_post(const HttpRequest &request,
             return;
         }
     }
+
+    // Check whether file uploads are enabled.
+    if (location == NULL || !location->upload_enabled)
+    {
+        status = "403 Forbidden";
+        body = "File uploads are not allowed\n";
+        return;
+    }
+
+    // Check whether the upload destination is configured.
+    if (location->upload_path.empty())
+    {
+        status = "500 Internal Server Error";
+        body = "Upload path is not configured\n";
+        return;
+    }
+
+    
 
     status = "501 Not Implemented";
     body = "POST is not implemented yet\n";
