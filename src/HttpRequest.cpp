@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <cctype>
+#include <limits>
 
 
 
@@ -159,6 +160,77 @@ void HttpParser::parse_head(const std::string &line, HttpRequest &request, bool 
     );
 }
 
+// Shared framing rules for socket accumulation and the complete request parser.
+bool HttpParser::get_body_framing(const std::string &headers_part,
+                                  bool &chunked, std::size_t &content_length)
+{
+    chunked = false;
+    content_length = 0;
+    bool has_length = false;
+    bool has_encoding = false;
+    std::string::size_type pos = headers_part.find("\r\n");
+    if (pos == std::string::npos)
+        return true;
+    pos += 2;
+    while (pos < headers_part.size())
+    {
+        std::string::size_type end = headers_part.find("\r\n", pos);
+        if (end == std::string::npos)
+            end = headers_part.size();
+        if (end == pos)
+            break;
+        const std::string::size_type colon = headers_part.find(':', pos);
+        if (colon == std::string::npos || colon == pos || colon >= end)
+            return false;
+        std::string name = headers_part.substr(pos, colon - pos);
+        for (std::size_t i = 0; i < name.size(); ++i)
+        {
+            const unsigned char c = static_cast<unsigned char>(name[i]);
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                || (c >= '0' && c <= '9')
+                || std::string("!#$%&'*+-.^_`|~").find(c) != std::string::npos))
+                return false;
+            if (c >= 'A' && c <= 'Z')
+                name[i] = static_cast<char>(c + ('a' - 'A'));
+        }
+        std::string value = headers_part.substr(colon + 1, end - colon - 1);
+        const std::string::size_type first = value.find_first_not_of(" \t");
+        if (first == std::string::npos)
+            value.clear();
+        else
+            value = value.substr(first, value.find_last_not_of(" \t") - first + 1);
+        if (name == "content-length")
+        {
+            if (has_length || value.empty())
+                return false;
+            has_length = true;
+            for (std::size_t i = 0; i < value.size(); ++i)
+            {
+                if (value[i] < '0' || value[i] > '9')
+                    return false;
+                const std::size_t digit = static_cast<std::size_t>(value[i] - '0');
+                if (content_length > (std::numeric_limits<std::size_t>::max() - digit) / 10)
+                    return false;
+                content_length = content_length * 10 + digit;
+            }
+        }
+        else if (name == "transfer-encoding")
+        {
+            if (has_encoding)
+                return false;
+            has_encoding = true;
+            for (std::size_t i = 0; i < value.size(); ++i)
+                if (value[i] >= 'A' && value[i] <= 'Z')
+                    value[i] = static_cast<char>(value[i] + ('a' - 'A'));
+            if (value != "chunked")
+                return false;
+            chunked = true;
+        }
+        pos = end + 2;
+    }
+    return !(has_length && has_encoding);
+}
+
 HttpRequest HttpParser::parse(const std::string &raw_request)
 {
     HttpRequest request;
@@ -202,54 +274,28 @@ HttpRequest HttpParser::parse(const std::string &raw_request)
     }
     if (request.version == "HTTP/1.1" && !host_found)
         throw std::runtime_error("Missing Host header");
-    bool has_transfer_encoding = request.headers.find("transfer-encoding") != request.headers.end();
-
-    bool has_content_length = request.headers.find("content-length") != request.headers.end();
-
-    if (has_transfer_encoding && has_content_length)
-        throw std::runtime_error("Transfer-Encoding and Content-Length cannot be used together");
-    std::string::size_type body_pos = raw_request.find("\r\n\r\n");
-    if (body_pos != std::string::npos)
-        request.body = raw_request.substr(body_pos + 4);
+    const std::string::size_type body_pos = raw_request.find("\r\n\r\n");
+    if (body_pos == std::string::npos)
+        throw std::runtime_error("Incomplete HTTP headers");
+    bool chunked = false;
+    std::size_t content_length = 0;
+    if (!get_body_framing(raw_request.substr(0, body_pos), chunked, content_length))
+        throw std::runtime_error("Invalid HTTP body framing");
+    const std::size_t body_start = body_pos + 4;
+    if (chunked)
+    {
+        std::string decoded_body;
+        const ChunkedStatus status =
+            unchunk_body(raw_request.substr(body_start), decoded_body);
+        if (status != CHUNKED_COMPLETE)
+            throw std::runtime_error("Invalid or incomplete chunked body");
+        request.body.swap(decoded_body);
+    }
     else
     {
-        body_pos = raw_request.find("\n\n");
-        if (body_pos != std::string::npos)
-            request.body = raw_request.substr(body_pos + 2);
-    }
-
-    std::map<std::string, std::string>::iterator it =
-    request.headers.find("transfer-encoding");
-
-    if (it != request.headers.end())
-    {
-        std::string transfer_encoding = it->second;
-
-        // Make Transfer-Encoding value lowercase
-        for (std::size_t i = 0; i < transfer_encoding.size(); ++i)
-        {
-            transfer_encoding[i] = static_cast<char>(
-                std::tolower(static_cast<unsigned char>(transfer_encoding[i]))
-            );
-        }
-
-        if (transfer_encoding != "chunked")
-            throw std::runtime_error("Unsupported Transfer-Encoding");
-
-        std::string decoded_body;
-
-        ChunkedStatus status = unchunk_body(request.body, decoded_body);
-
-        if (status == CHUNKED_INCOMPLETE)
-            throw std::runtime_error("Incomplete chunked body");
-
-        if (status == CHUNKED_INVALID)
-            throw std::runtime_error("Invalid chunked body");
-
-        if (status == CHUNKED_TOO_LARGE)
-            throw std::runtime_error("Chunked body too large");
-
-        request.body = decoded_body;
+        if (raw_request.size() - body_start < content_length)
+            throw std::runtime_error("Incomplete HTTP body");
+        request.body = raw_request.substr(body_start, content_length);
     }
     return request;
 }

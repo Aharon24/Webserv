@@ -35,7 +35,7 @@
 ** TODO 5: Write file content
 ** [x] Write binary data without modifying it.
 ** [x] Handle partial write() operations.
-** [x] Handle EINTR correctly.
+** NOTE: write() failures use a fixed error; errno is not inspected.
 ** [x] Detect write() failures.
 **
 ** TODO 6: Close and clean up
@@ -72,6 +72,7 @@
 #include "Upload.hpp"
 
 #include <cerrno>
+#include <cstdio>
 #include <fcntl.h>
 #include <limits>
 #include <map>
@@ -455,7 +456,7 @@ namespace
         return access(directory.c_str(), W_OK | X_OK) == 0;
     }
 
-	// Writes the entire content to the file descriptor, handling partial writes and EINTR.
+	// Handles partial writes; write failures use a fixed error without reading errno.
     bool write_content(int fd, const std::string &content)
     {
         std::string::size_type offset = 0;
@@ -468,13 +469,7 @@ namespace
             if (count > max_write)
                 count = max_write;
             ssize_t written = write(fd, content.c_str() + offset, count);
-            if (written < 0)
-            {
-                if (errno == EINTR)
-                    continue;
-                return false;
-            }
-            if (written == 0)
+            if (written <= 0)
             {
                 errno = EIO;
                 return false;
@@ -509,17 +504,17 @@ bool Upload::save_file(const std::string &directory,
         return false;
     if (!write_content(fd, content))
     {
-        const int error = errno;
+        const int error = EIO;
         close(fd);
-        unlink(path.c_str());
-        errno = error;
+        const bool cleaned = std::remove(path.c_str()) == 0;
+        errno = cleaned ? error : EIO;
         return false;
     }
     if (close(fd) == -1)
     {
         const int error = errno;
-        unlink(path.c_str());
-        errno = error;
+        const bool cleaned = std::remove(path.c_str()) == 0;
+        errno = cleaned ? error : EIO;
         return false;
     }
     return true;
