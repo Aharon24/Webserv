@@ -1,4 +1,7 @@
 #include "Server.hpp"
+#include "Router.hpp"
+#include "StaticFileHandler.hpp"
+#include "HttpResponse.hpp"
 
 
 Server::Server(const std::vector<ServerConfig> &configs) : _configs(configs)
@@ -100,31 +103,10 @@ int Server::accept_connection(int server_fd)
     return client_fd;
 }
 
+// Location matching lives in Router (longest prefix on whole path segments).
 const LocationConfig* Server::find_location(const std::string &path, const ServerConfig &conf) const
 {
-    const LocationConfig *best = NULL;
-
-    for (std::size_t i = 0; i < conf.locations.size(); ++i)
-    {
-        const std::string &prefix = conf.locations[i].path;
-        bool matches = false;
-
-        if (prefix.empty())
-            continue;
-
-        if (path.size() >= prefix.size() && path.compare(0, prefix.size(), prefix) == 0)
-        {
-            if (path.size() == prefix.size())
-                matches = true;
-            else if (prefix == "/")
-                matches = true;
-            else if (path[prefix.size()] == '/')
-                matches = true;
-        }
-        if (matches &&(best == NULL || prefix.size() > best->path.size()))
-            best = &conf.locations[i];
-    }
-    return best;
+    return Router(conf).find_location(path);
 }
 
 
@@ -161,39 +143,7 @@ void Server::collect_listens()
     }
 }
 
-void Server::handle_get(const HttpRequest &request,const ServerConfig &conf,std::string &status,std::string &body)
-{
-    std::string file_path;
-    const LocationConfig *location = find_location(request.path, conf);
-    file_path = build_file_path(request, location, conf);
-    struct stat info;
-    if (stat(file_path.c_str(), &info) == 0 && S_ISDIR(info.st_mode))
-    {
-        std::string index;
-    
-        if (location != NULL && !location->index.empty())
-            index = location->index;
-        else
-            index = conf.index;
-        if (!file_path.empty() && file_path[file_path.size() - 1] != '/')
-            file_path += '/';
-        file_path += index;
-    }
-    std::ifstream file(file_path.c_str(), std::ios::in | std::ios::binary);
-    if(!file)
-    {
-        status = "404 Not Found";
-        body = "404 Not Found\n";
-    }
-    else
-    {
-        std::ostringstream content;
-        content << file.rdbuf();
-        body = content.str();
-        status = "200 OK";
-    }
-}
-
+// GET is implemented by StaticFileHandler (see build_response()).
 
 /*
 **
@@ -528,81 +478,81 @@ void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,
 }
 
 
+// Builds status line + headers for a status string ("404 Not Found") and a body.
+// The caller appends the body itself. Header generation lives in HttpResponse.
 std::string Server::create_response_data(const HttpRequest &request, std::string &status, std::string &body)
 {
-    std::ostringstream header;
-    header << request.version << " " << status << "\r\n";
-    header << "Content-Length: " << body.size() << "\r\n";
-    header << "Content-Type: text/html; charset=UTF-8\r\n";
-    header << "Connection: close\r\n";
-    header << "\r\n";
-    return (header.str());
+    return HttpResponse::from_status_line(status, body).build_head(request.version);
+}
+
+namespace
+{
+    // POST / DELETE handlers report "<status line>" + body. Success responses
+    // are sent as they are; 4xx/5xx ones get the configured (or built-in) error page.
+    HttpResponse finish_handler_response(const StaticFileHandler &files, const std::string &status, const std::string &body)
+    {
+        HttpResponse response = HttpResponse::from_status_line(status, body);
+
+        if (response.get_status() >= 400)
+            return files.make_error(response.get_status());
+        return response;
+    }
 }
 
 std::string Server::build_response(const HttpRequest &request,const ServerConfig &conf)
 {
-    std::string body;
-    std::string status;
+    const Router router(conf);
+    const StaticFileHandler files(conf, router);
+    const RouteResult route = router.route(request);
+    HttpResponse response;
 
-    const LocationConfig *location = find_location(request.path, conf);
-
-    if (location != NULL && location->return_code != 0)
+    switch (route.status)
     {
-        std::ostringstream ss;
-        ss << request.version << " " << location->return_code << " Moved Permanently\r\n"
-           << "Location: " << location->return_url << "\r\n"
-           << "Content-Length: 0\r\n"
-           << "Connection: close\r\n\r\n";
-        return ss.str();
-    }
+        case ROUTE_BAD_REQUEST:
+            response = files.make_error(400);
+            break;
+        case ROUTE_FORBIDDEN:
+            response = files.make_error(403);
+            break;
+        case ROUTE_REDIRECT:
+            response = files.make_redirect(route.redirect_code, route.redirect_url);
+            break;
+        case ROUTE_METHOD_NOT_ALLOWED:
+            response = files.make_error(405);
+            response.set_header("Allow", route.allow);
+            break;
+        case ROUTE_OK:
+        {
+            // Handlers receive the decoded, normalized path.
+            HttpRequest routed = request;
+            std::string status;
+            std::string body;
 
-    if (request.path.empty() ||
-        request.path[0] != '/' ||
-        request.path.find("..") != std::string::npos)
-    {
-        status = "403 Forbidden";
-        body = "403 Forbidden\n";
+            routed.path = route.uri;
+            if (request.method == "GET")
+                response = files.handle_get(routed, route);
+            else if (request.method == "POST")
+            {
+                handle_post(routed, conf, status, body);
+                response = finish_handler_response(files, status, body);
+            }
+            else
+            {
+                handle_delete(routed, conf, status, body);
+                response = finish_handler_response(files, status, body);
+            }
+            break;
+        }
     }
-    else if (request.method == "GET")
-        handle_get(request, conf, status, body);
-    else if (request.method == "POST")
-        handle_post(request, conf, status, body);
-    else if (request.method == "DELETE")
-        handle_delete(request, conf, status, body);
-    else
-    {
-        status = "405 Method Not Allowed";
-        body = "405 Method Not Allowed\n";
-    }
-
-    return create_response_data(request, status, body) + body;
+    return response.build(request.version);
 }
 
 
 
+// root + URI (without the matched location prefix); see Router::build_path().
 std::string Server::build_file_path(const HttpRequest &request,const LocationConfig *location,const ServerConfig &conf) const
 {
-    std::string root;
-    std::string relative_path;
-
-    if (location != NULL)
-    {
-        if (location->root.empty())
-            root = conf.root;
-        else
-            root = location->root;
-        relative_path = request.path.substr(location->path.size());
-    }
-    else
-    {
-        root = conf.root;
-        relative_path = request.path;   
-    }
-    if (!relative_path.empty() && relative_path[0] == '/')
-        relative_path.erase(0, 1);
-    if (!root.empty() && root[root.size() - 1] != '/')
-        root += '/';
-    return root + relative_path;
+    return Router(conf).build_path(request.path, location);
 }
 
 
