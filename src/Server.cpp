@@ -309,24 +309,23 @@ request.headers["content-type"]; // Multipart Content-Type
     location->return_url;      // Optional redirect for POST
 */
 
+
 void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, std::string &status, std::string &body)
 {
-    // Find the location matching the request URI.
     const LocationConfig *location = find_location(request.path, conf);
 
-    std::cout << "POST method received!" << std::endl;
-    std::cout << "Request path: " << request.path << std::endl;
+    if (location == NULL)
+    {
+        status = "404 Not Found";
+        body = "404 Not Found\n";
+        return;
+    }
 
-    if (location != NULL)
-        std::cout << "Location found: " << location->path << std::endl;
-    else
-        std::cout << "Location not found" << std::endl;
-
-    if (location != NULL && !location->allowed_methods.empty())
+    if (!location->allowed_methods.empty())
     {
         bool allowed = false;
-    
-        for(std::size_t i = 0; i < location->allowed_methods.size(); ++i)
+
+        for (std::size_t i = 0; i < location->allowed_methods.size(); ++i)
         {
             if (location->allowed_methods[i] == "POST")
             {
@@ -334,7 +333,7 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
                 break;
             }
         }
-    
+
         if (!allowed)
         {
             status = "405 Method Not Allowed";
@@ -343,37 +342,51 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
         }
     }
 
-    // Check whether file uploads are enabled.
-    if (location == NULL || !location->upload_enabled)
-    {
-        status = "403 Forbidden";
-        body = "File uploads are not allowed\n";
-        return;
-    }
+    const std::map<std::string, std::string>::const_iterator type =
+        request.headers.find("content-type");
 
-    // Check whether the upload destination is configured.
-    if (location->upload_path.empty())
-    {
-        status = "500 Internal Server Error";
-        body = "Upload path is not configured\n";
-        return;
-    }
-
-    
-
-    const std::map<std::string, std::string>::const_iterator type = request.headers.find("content-type");
     if (type == request.headers.end())
     {
         status = "400 Bad Request";
         body = "Missing Content-Type\n";
         return;
     }
-    std::string media_type = type->second.substr(0, type->second.find(';'));
-    const std::string::size_type last = media_type.find_last_not_of(" \t");
-    media_type.erase(last == std::string::npos ? 0 : last + 1);
+
+    std::string media_type =
+        type->second.substr(0, type->second.find(';'));
+
+    std::string::size_type first =
+        media_type.find_first_not_of(" \t");
+
+    std::string::size_type last =
+        media_type.find_last_not_of(" \t");
+
+    if (first == std::string::npos)
+    {
+        media_type.clear();
+    }
+    else
+    {
+        media_type = media_type.substr(first, last - first + 1);
+    }
+
     for (std::size_t i = 0; i < media_type.size(); ++i)
+    {
         if (media_type[i] >= 'A' && media_type[i] <= 'Z')
-            media_type[i] = static_cast<char>(media_type[i] + ('a' - 'A'));
+        {
+            media_type[i] =
+                static_cast<char>(media_type[i] + ('a' - 'A'));
+        }
+    }
+
+    if (media_type == "text/plain"
+        || media_type == "application/x-www-form-urlencoded")
+    {
+        status = "200 OK";
+        body = "POST received\n";
+        return;
+    }
+
     if (media_type != "multipart/form-data")
     {
         status = "415 Unsupported Media Type";
@@ -381,8 +394,23 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
         return;
     }
 
+    if (!location->upload_enabled)
+    {
+        status = "403 Forbidden";
+        body = "File uploads are not allowed\n";
+        return;
+    }
+
+    if (location->upload_path.empty())
+    {
+        status = "500 Internal Server Error";
+        body = "Upload path is not configured\n";
+        return;
+    }
+
     std::vector<Upload::UploadedFile> files;
     std::string error;
+
     if (!Upload::parse_multipart(type->second, request.body, files, error)
         || files.empty())
     {
@@ -391,8 +419,8 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
         return;
     }
 
-    // Detect duplicate names before creating any files.
     std::set<std::string> names;
+
     for (std::size_t i = 0; i < files.size(); ++i)
     {
         if (!names.insert(files[i].filename).second)
@@ -402,6 +430,7 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
             return;
         }
     }
+
     for (std::size_t i = 0; i < files.size(); ++i)
     {
         if (!Upload::save_file(location->upload_path, files[i].filename,
@@ -409,34 +438,55 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
         {
             const int saved_error = errno;
             bool cleaned = true;
-            // Roll back only files successfully created by this request.
+
             for (std::size_t j = 0; j < i; ++j)
             {
                 std::string path = location->upload_path;
-                if (path[path.size() - 1] != '/')
+
+                if (!path.empty() && path[path.size() - 1] != '/')
+                {
                     path += '/';
+                }
+
                 path += files[j].filename;
+
                 if (std::remove(path.c_str()) != 0)
+                {
                     cleaned = false;
+                }
             }
+
             if (!cleaned)
+            {
                 status = "500 Internal Server Error";
+            }
             else if (saved_error == EEXIST)
+            {
                 status = "409 Conflict";
+            }
             else if (saved_error == EACCES || saved_error == EPERM
                      || saved_error == EROFS)
+            {
                 status = "403 Forbidden";
+            }
             else if (saved_error == EINVAL)
+            {
                 status = "400 Bad Request";
+            }
             else
+            {
                 status = "500 Internal Server Error";
+            }
+
             body = status + "\n";
             return;
         }
     }
+
     status = "201 Created";
     body = "Files uploaded\n";
 }
+
 
 
 
