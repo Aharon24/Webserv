@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <vector>
 #include <sstream>
+#include <cerrno>
 
 namespace
 {
@@ -144,6 +145,24 @@ bool CgiHandler::was_successful() const
 CgiHandler::~CgiHandler()
 {
     terminate();
+
+    if (_pid > 0 && !_child_exited)
+    {
+        pid_t result;
+
+        do
+        {
+            result = waitpid(_pid, &_wait_status, 0);
+        }
+        while (result == -1 && errno == EINTR);
+
+        if (result == _pid ||
+            (result == -1 && errno == ECHILD))
+        {
+            _pid = -1;
+            _child_exited = true;
+        }
+    }
 }
 
 bool CgiHandler::start(std::string &error_status)
@@ -168,13 +187,13 @@ bool CgiHandler::start(std::string &error_status)
 
     if (!S_ISREG(info.st_mode))
     {
-        error_status = "403 Forbidden";
+        error_status = "405 Method Not Allowed";
         return false;
     }
 
     if (access(_script_path.c_str(), R_OK) == -1)
     {
-        error_status = "403 Forbidden";
+        error_status = "405 Method Not Allowed";
         return false;
     }
 
@@ -343,7 +362,14 @@ void CgiHandler::terminate()
 
     if (_pid > 0 && !_child_exited)
     {
-        kill(_pid, SIGKILL);
+        int result;
+
+        do
+        {
+            result = kill(_pid, SIGKILL);
+        }
+        while (result == -1 && errno == EINTR);
+
         return;
     }
 
@@ -449,7 +475,13 @@ bool CgiHandler::check_child(std::string &error_status)
         return false;
     }
 
-    pid_t result = waitpid(_pid, &_wait_status, WNOHANG);
+    pid_t result;
+
+    do
+    {
+        result = waitpid(_pid, &_wait_status, WNOHANG);
+    }
+    while (result == -1 && errno == EINTR);
 
     if (result == 0)
         return true;

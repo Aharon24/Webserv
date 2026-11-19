@@ -59,6 +59,9 @@ public:
     const std::string &get_http_version() const;
     bool was_successful() const;
 
+
+    void close_stdin();
+    void close_stdout();
     int get_client_fd() const;
     int get_stdin_fd() const;
     int get_stdout_fd() const;
@@ -96,7 +99,7 @@ struct HttpRequest
     std::string version;
     std::string host;
     std::string query_string;
-    std::map<std::string, std::string> headeras;
+    std::map<std::string, std::string> headers;
     std::string body;
 };
 
@@ -992,13 +995,13 @@ bool CgiHandler::start(std::string &error_status)
 
     if (!S_ISREG(info.st_mode))
     {
-        error_status = "403 Forbidden";
+        error_status = "405 Method Not Allowed";
         return false;
     }
 
     if (access(_script_path.c_str(), R_OK) == -1)
     {
-        error_status = "403 Forbidden";
+        error_status = "405 Method Not Allowed";
         return false;
     }
 
@@ -1249,6 +1252,18 @@ bool CgiHandler::handle_stdout_read(std::string &error_status)
     );
 
     return true;
+}
+
+void CgiHandler::close_stdin()
+{
+    close_fd(_stdin_fd);
+    _stdin_closed = true;
+}
+
+void CgiHandler::close_stdout()
+{
+    close_fd(_stdout_fd);
+    _stdout_closed = true;
 }
 bool CgiHandler::check_child(std::string &error_status)
 {
@@ -3046,17 +3061,7 @@ std::string Router::get_index(const LocationConfig *location) const
 // "location /kapouet { root /tmp/www; }" maps /kapouet/a/b to /tmp/www/a/b.
 std::string Router::build_path(const std::string &uri, const LocationConfig *location) const
 {
-    std::string relative = uri;
-
-    if (location != NULL && location->path != "/")
-    {
-        std::string prefix = location->path;
-
-        if (prefix[prefix.size() - 1] == '/')
-            prefix.erase(prefix.size() - 1);
-        relative = uri.substr(prefix.size());
-    }
-    return join_path(get_root(location), relative);
+    return join_path(get_root(location), uri);
 }
 
 bool Router::is_method_allowed(const LocationConfig *location, const std::string &method) const
@@ -3442,9 +3447,7 @@ request.headers["content-type"]; // Multipart Content-Type
     location->return_url;      // Optional redirect for POST
 */
 
-void Server::handle_post(const HttpRequest &request,
-    const ServerConfig &conf,
-    std::string &status, std::string &body)
+void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, std::string &status, std::string &body)
 {
     // Find the location matching the request URI.
     const LocationConfig *location = find_location(request.path, conf);
@@ -3496,8 +3499,7 @@ void Server::handle_post(const HttpRequest &request,
 
     
 
-    const std::map<std::string, std::string>::const_iterator type =
-        request.headers.find("content-type");
+    const std::map<std::string, std::string>::const_iterator type = request.headers.find("content-type");
     if (type == request.headers.end())
     {
         status = "400 Bad Request";
@@ -4602,24 +4604,36 @@ void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vecto
 
         if (client_exists && client_it->cgi_pending)
         {
-            // Send request body to CGI stdin.
+            // Handle CGI stdin.
             short input_events = fds[input_index].revents;
-
-            if (cgi->get_stdin_fd() != -1 &&
-                (input_events & (POLLOUT | POLLERR | POLLHUP | POLLNVAL)))
+        
+            if (cgi->get_stdin_fd() != -1)
             {
-                if (!cgi->handle_stdin_write(error_status))
+                if (input_events & POLLNVAL)
                     io_ok = false;
+                else if (input_events & (POLLERR | POLLHUP))
+                    cgi->close_stdin();
+                else if (input_events & POLLOUT)
+                {
+                    if (!cgi->handle_stdin_write(error_status))
+                        io_ok = false;
+                }
             }
-
-            // Read CGI stdout.
+        
+            // Handle CGI stdout.
             short output_events = fds[output_index].revents;
-
-            if (cgi->get_stdout_fd() != -1 &&
-                (output_events & (POLLIN | POLLERR | POLLHUP | POLLNVAL)))
+        
+            if (cgi->get_stdout_fd() != -1)
             {
-                if (!cgi->handle_stdout_read(error_status))
+                if (output_events & (POLLNVAL | POLLERR))
                     io_ok = false;
+                else if (output_events & POLLIN)
+                {
+                    if (!cgi->handle_stdout_read(error_status))
+                        io_ok = false;
+                }
+                else if (output_events & POLLHUP)
+                    cgi->close_stdout();
             }
         }
 
