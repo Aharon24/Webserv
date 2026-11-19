@@ -65,6 +65,8 @@ public:
     void parse_location_upload_path(LocationConfig &location);
     void parse_location_cgi(LocationConfig &location);
 
+    void parse_location_client_max_body_size(LocationConfig &location);
+
 
 //  check file and path 
     void validate_directory(const std::string &path, const std::string &name, int permissions) const;

@@ -836,6 +836,7 @@ FILE: src/CgiHandler.cpp
 #include <cerrno>
 #include <vector>
 #include <sstream>
+#include <cerrno>
 
 namespace
 {
@@ -971,6 +972,24 @@ bool CgiHandler::was_successful() const
 CgiHandler::~CgiHandler()
 {
     terminate();
+
+    if (_pid > 0 && !_child_exited)
+    {
+        pid_t result;
+
+        do
+        {
+            result = waitpid(_pid, &_wait_status, 0);
+        }
+        while (result == -1 && errno == EINTR);
+
+        if (result == _pid ||
+            (result == -1 && errno == ECHILD))
+        {
+            _pid = -1;
+            _child_exited = true;
+        }
+    }
 }
 
 bool CgiHandler::start(std::string &error_status)
@@ -1170,7 +1189,14 @@ void CgiHandler::terminate()
 
     if (_pid > 0 && !_child_exited)
     {
-        kill(_pid, SIGKILL);
+        int result;
+
+        do
+        {
+            result = kill(_pid, SIGKILL);
+        }
+        while (result == -1 && errno == EINTR);
+
         return;
     }
 
@@ -1276,7 +1302,13 @@ bool CgiHandler::check_child(std::string &error_status)
         return false;
     }
 
-    pid_t result = waitpid(_pid, &_wait_status, WNOHANG);
+    pid_t result;
+
+    do
+    {
+        result = waitpid(_pid, &_wait_status, WNOHANG);
+    }
+    while (result == -1 && errno == EINTR);
 
     if (result == 0)
         return true;
@@ -3059,7 +3091,7 @@ std::string Router::get_index(const LocationConfig *location) const
 
 // The part of the URI that matched the location is replaced by the root, so
 // "location /kapouet { root /tmp/www; }" maps /kapouet/a/b to /tmp/www/a/b.
-std::string Router::build_path(const std::string &uri, const LocationConfig *location) const
+std::string Router::build_path(const std::string &uri,const LocationConfig *location) const
 {
     return join_path(get_root(location), uri);
 }
@@ -4009,13 +4041,26 @@ std::string Server::build_file_path(const HttpRequest &request,const LocationCon
 }
 
 
-void Server::remove_client(int client_fd, std::vector<ClientConnection> &clients)
+void Server::remove_client(int client_fd,std::vector<ClientConnection> &clients)
 {
-    for (std::vector<ClientConnection>::iterator it = clients.begin(); it != clients.end(); ++it)
+    for (std::vector<ClientConnection>::iterator it = clients.begin();
+         it != clients.end(); ++it)
     {
         if (it->fd == client_fd)
         {
-            std::cout << "Closing client FD: " << it->fd << std::endl;
+            std::cout << "Closing client FD: "
+                      << it->fd << std::endl;
+
+            // Terminate CGI belonging to this client.
+            for (std::size_t i = 0; i < _cgi_processes.size(); ++i)
+            {
+                if (_cgi_processes[i] != NULL &&
+                    _cgi_processes[i]->get_client_fd() == client_fd)
+                {
+                    _cgi_processes[i]->terminate();
+                }
+            }
+
             close(it->fd);
             clients.erase(it);
             return;
@@ -4754,6 +4799,17 @@ void Server::run(HttpParser &parser)
 
 Server::~Server()
 {
+    for (std::size_t i = 0; i < _cgi_processes.size(); ++i)
+    {
+        if (_cgi_processes[i] != NULL)
+        {
+            delete _cgi_processes[i];
+            _cgi_processes[i] = NULL;
+        }
+    }
+
+    _cgi_processes.clear();
+
     for (std::size_t i = 0; i < _server_fds.size(); ++i)
     {
         if (_server_fds[i] != -1)

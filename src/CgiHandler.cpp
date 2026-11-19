@@ -110,11 +110,12 @@ CgiHandler::CgiHandler(
     int client_fd,
     const HttpRequest &request,
     const std::string &script_path,
-    const std::string &interpreter_path)
+    const std::string &interpreter_path,
+    const std::string &path_info)
     : _request(request),
       _script_path(script_path),
       _interpreter_path(interpreter_path),
-      _path_info(""),
+      _path_info(path_info),
       _input_buffer(request.body),
       _output_buffer(""),
       _input_offset(0),

@@ -97,7 +97,7 @@ private:
     const ServerConfig *find_server_config(const std::string &host) const;
 
     // CGI
-    bool start_cgi(ClientConnection &client,const HttpRequest &request,const std::string &script_path,const std::string &interpreter_path,std::string &error_status);
+    bool start_cgi(ClientConnection &client,const HttpRequest &request,const std::string &script_path,const std::string &interpreter_path,const std::string &path_info,std::string &error_status);
     void process_cgi_events(const std::vector<struct pollfd> &fds,std::vector<ClientConnection> &clients,std::size_t polled_client_count,std::size_t polled_cgi_count);
     void remove_cgi_for_client(int client_fd);
     const CgiConfig *find_cgi_config(const std::string &uri, const LocationConfig *location) const;
@@ -115,8 +115,7 @@ public:
     bool handle_client_event(ClientConnection &client, HttpParser &parser);
 
     bool get_content_length(const std::string &headers_part, std::size_t &content_length) const;    
-    bool check_max_body_size(ClientConnection &client, std::size_t content_length, const ServerConfig &conf);
-    void parse_and_respond(ClientConnection &client, HttpParser &http_parser, const ServerConfig &conf);
+    bool check_max_body_size(ClientConnection &client,std::size_t content_length,std::size_t max_body_size);    void parse_and_respond(ClientConnection &client, HttpParser &http_parser, const ServerConfig &conf);
     bool read_client_data(ClientConnection &client, bool &stop_processing);
     const ServerConfig &get_server_config(const ClientConnection &client) const;
 
@@ -144,6 +143,9 @@ public:
     bool is_chunked(const std::string &headers_part) const;
 
     void handle_large_header(ClientConnection &client);
+
+    std::size_t get_request_body_limit(const std::string &headers_part,const ServerConfig &conf) const;
+
 };
 
 #endif

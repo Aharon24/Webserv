@@ -43,7 +43,8 @@ public:
         int client_fd,
         const HttpRequest &request,
         const std::string &script_path,
-        const std::string &interpreter_path
+        const std::string &interpreter_path,
+        const std::string &path_info
     );
 
     ~CgiHandler();

@@ -436,6 +436,44 @@ void Parser::parse_location_cgi(LocationConfig &location)
     location.cgi.push_back(config);
 }
 
+void Parser::parse_location_client_max_body_size(LocationConfig &location)
+{
+    ++_index;
+
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected size after 'client_max_body_size'");
+
+    const std::string value = _tokens[_index].value;
+    std::string::size_type pos = 0;
+
+    while (pos < value.size() && value[pos] >= '0' && value[pos] <= '9')
+        ++pos;
+
+    if (pos == 0)
+        throw std::runtime_error("Invalid client_max_body_size value");
+
+    std::string number_part = value.substr(0, pos);
+    std::string suffix = value.substr(pos);
+
+    std::size_t multiplier = 1;
+    std::size_t number = 0;
+
+    bit_size(suffix, multiplier);
+    get_number_multiplayer(number_part, number);
+
+    if (number > std::numeric_limits<std::size_t>::max() / multiplier)
+        throw std::runtime_error("client_max_body_size overflow");
+
+    location.client_max_body_size = number * multiplier;
+
+    ++_index;
+
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after client_max_body_size");
+
+    ++_index;
+}
+
 void Parser::parse_location_directives(LocationConfig &location)
 {
     bool root_defined = false;
@@ -510,7 +548,14 @@ void Parser::parse_location_directives(LocationConfig &location)
             ++_index;
             parse_location_cgi(location);
         }
+        else if (_tokens[_index].type == TOKEN_CLIENT_MAX_BODY_SIZE)
+        {
+            if (location.client_max_body_size_defined)
+                throw std::runtime_error("Duplicate 'client_max_body_size' directive");
         
+            parse_location_client_max_body_size(location);
+            location.client_max_body_size_defined = true;
+        }
         else
             throw std::runtime_error("Unknown directive inside location: '" + _tokens[_index].value + "'");
     }

@@ -195,7 +195,37 @@ std::string Router::get_index(const LocationConfig *location) const
 // "location /kapouet { root /tmp/www; }" maps /kapouet/a/b to /tmp/www/a/b.
 std::string Router::build_path(const std::string &uri, const LocationConfig *location) const
 {
-    return join_path(get_root(location), uri);
+    std::string relative = uri;
+
+    if (location != NULL)
+    {
+        const std::string &prefix = location->path;
+
+        if (prefix == "/")
+        {
+            if (!relative.empty() && relative[0] == '/')
+            {
+                relative.erase(0, 1);
+            }
+        }
+        else if (prefix[prefix.size() - 1] == '/')
+        {
+            if (uri == prefix.substr(0, prefix.size() - 1))
+            {
+                relative.clear();
+            }
+            else if (uri.compare(0, prefix.size(), prefix) == 0)
+            {
+                relative = uri.substr(prefix.size());
+            }
+        }
+        else if (uri.compare(0, prefix.size(), prefix) == 0)
+        {
+            relative = uri.substr(prefix.size());
+        }
+    }
+
+    return join_path(get_root(location), relative);
 }
 
 bool Router::is_method_allowed(const LocationConfig *location, const std::string &method) const

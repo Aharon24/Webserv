@@ -141,13 +141,14 @@ const CgiConfig *Server::find_cgi_config(const std::string &uri,const LocationCo
     return NULL;
 }
 
-bool Server::start_cgi(ClientConnection &client,const HttpRequest &request,const std::string &script_path,const std::string &interpreter_path,std::string &error_status)
+bool Server::start_cgi(ClientConnection &client,const HttpRequest &request,const std::string &script_path,const std::string &interpreter_path,const std::string &path_info,std::string &error_status)
 {
     CgiHandler *cgi = new CgiHandler(
         client.fd,
         request,
         script_path,
-        interpreter_path
+        interpreter_path,
+        path_info
     );
 
     if (!cgi->start(error_status))
@@ -776,7 +777,7 @@ namespace
     }
 }
 
-std::string Server::build_response(ClientConnection &client,const HttpRequest &request,const ServerConfig &conf)
+std::string Server::build_response(ClientConnection &client, const HttpRequest &request, const ServerConfig &conf)
 {
     const Router router(conf);
     const StaticFileHandler files(conf, router);
@@ -813,7 +814,7 @@ std::string Server::build_response(ClientConnection &client,const HttpRequest &r
 
             routed.path = route.uri;
 
-            if (request.method == "GET" || request.method == "POST")
+            if (request.method == "POST")
             {
                 const CgiConfig *cgi_config =
                     find_cgi_config(route.uri, route.location);
@@ -827,6 +828,7 @@ std::string Server::build_response(ClientConnection &client,const HttpRequest &r
                             routed,
                             route.fs_path,
                             cgi_config->interpreter,
+                            "",
                             error_status))
                     {
                         return "";
@@ -854,12 +856,14 @@ std::string Server::build_response(ClientConnection &client,const HttpRequest &r
                 handle_delete(routed, conf, status, body);
                 response = finish_handler_response(files, status, body);
             }
+
             break;
         }
     }
 
     return response.build(request.version);
 }
+
 
 
 
@@ -870,13 +874,26 @@ std::string Server::build_file_path(const HttpRequest &request,const LocationCon
 }
 
 
-void Server::remove_client(int client_fd, std::vector<ClientConnection> &clients)
+void Server::remove_client(int client_fd,std::vector<ClientConnection> &clients)
 {
-    for (std::vector<ClientConnection>::iterator it = clients.begin(); it != clients.end(); ++it)
+    for (std::vector<ClientConnection>::iterator it = clients.begin();
+         it != clients.end(); ++it)
     {
         if (it->fd == client_fd)
         {
-            std::cout << "Closing client FD: " << it->fd << std::endl;
+            std::cout << "Closing client FD: "
+                      << it->fd << std::endl;
+
+            // Terminate CGI belonging to this client.
+            for (std::size_t i = 0; i < _cgi_processes.size(); ++i)
+            {
+                if (_cgi_processes[i] != NULL &&
+                    _cgi_processes[i]->get_client_fd() == client_fd)
+                {
+                    _cgi_processes[i]->terminate();
+                }
+            }
+
             close(it->fd);
             clients.erase(it);
             return;
@@ -893,20 +910,25 @@ bool Server::get_content_length(const std::string &headers_part,std::size_t &con
 }
 
 
-bool Server::check_max_body_size(ClientConnection &client, std::size_t content_length, const ServerConfig &conf)
+bool Server::check_max_body_size(ClientConnection &client,std::size_t content_length,std::size_t max_body_size)
 {
-    if (conf.client_max_body_size > 0 && content_length > conf.client_max_body_size)
+    if (max_body_size > 0 && content_length > max_body_size)
     {
-        std::cerr << "Error: Request body exceeds client_max_body_size" << std::endl;
         HttpRequest dummy_req;
         dummy_req.version = "HTTP/1.1";
+
         std::string status = "413 Payload Too Large";
-        std::string body = "413 Payload Too Large\n";
-        client.response_buffer = create_response_data(dummy_req, status, body) + body;
+        std::string body = status + "\n";
+
+        client.response_buffer =
+            create_response_data(dummy_req, status, body) + body;
+
         client.request_complete = true;
         client.response_ready = true;
+
         return true;
     }
+
     return false;
 }
 
@@ -1109,6 +1131,8 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
     std::string headers_part = client.request_buffer.substr(0, header_end);
     std::string::size_type body_start = header_end + 4;
 
+    const std::size_t max_body_size = get_request_body_limit(headers_part, conf);
+
     bool chunked = false;
     std::size_t content_length = 0;
     if (!HttpParser::get_body_framing(headers_part, chunked, content_length))
@@ -1153,12 +1177,12 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
             return true;
         }
 
-        if (check_max_body_size(client, decoded_body.size(), conf))
+        if (check_max_body_size(client, decoded_body.size(), max_body_size))
             return true;
     }
     else
     {
-        if (check_max_body_size(client, content_length, conf))
+        if (check_max_body_size(client, content_length, max_body_size))
             return true;
 
         if (client.request_buffer.size() - body_start < content_length)
@@ -1572,6 +1596,40 @@ void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vecto
         }
     }
 }
+
+
+std::size_t Server::get_request_body_limit(const std::string &headers_part,const ServerConfig &conf) const
+{
+    std::istringstream stream(headers_part);
+    std::string request_line;
+
+    if (!std::getline(stream, request_line))
+        return conf.client_max_body_size;
+
+    std::istringstream line(request_line);
+    HttpRequest request;
+    std::string extra;
+
+    if (!(line >> request.method >> request.path >> request.version))
+        return conf.client_max_body_size;
+
+    if (line >> extra)
+        return conf.client_max_body_size;
+
+    std::string::size_type query = request.path.find('?');
+
+    if (query != std::string::npos)
+        request.path.erase(query);
+
+    RouteResult route = Router(conf).route(request);
+
+    if (route.location != NULL &&
+        route.location->client_max_body_size_defined)
+        return route.location->client_max_body_size;
+
+    return conf.client_max_body_size;
+}
+
 void Server::run(HttpParser &parser)
 {
     std::vector<ClientConnection> clients;
@@ -1615,6 +1673,17 @@ void Server::run(HttpParser &parser)
 
 Server::~Server()
 {
+    for (std::size_t i = 0; i < _cgi_processes.size(); ++i)
+    {
+        if (_cgi_processes[i] != NULL)
+        {
+            delete _cgi_processes[i];
+            _cgi_processes[i] = NULL;
+        }
+    }
+
+    _cgi_processes.clear();
+
     for (std::size_t i = 0; i < _server_fds.size(); ++i)
     {
         if (_server_fds[i] != -1)

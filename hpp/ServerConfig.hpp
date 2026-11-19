@@ -17,6 +17,7 @@ struct ListenConfig
     std::string ip;
     int port;
 
+
     ListenConfig() : port(0)
     {
     }
@@ -37,6 +38,9 @@ struct LocationConfig
     bool upload_enabled;
     std::string upload_path;
 
+    std::size_t client_max_body_size;
+    bool client_max_body_size_defined;
+
     std::vector<CgiConfig> cgi;
 
     LocationConfig()
@@ -45,7 +49,9 @@ struct LocationConfig
           index(""),
           return_code(0),
           autoindex(false),
-          upload_enabled(false)
+          upload_enabled(false),
+        client_max_body_size(0),
+        client_max_body_size_defined(false)
     {
     }
 };
