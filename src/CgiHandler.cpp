@@ -129,6 +129,18 @@ CgiHandler::CgiHandler(
 {
 }
 
+const std::string &CgiHandler::get_http_version() const
+{
+    return _request.version;
+}
+
+bool CgiHandler::was_successful() const
+{
+    return _child_exited &&
+           WIFEXITED(_wait_status) &&
+           WEXITSTATUS(_wait_status) == 0;
+}
+
 CgiHandler::~CgiHandler()
 {
     terminate();
@@ -390,11 +402,7 @@ bool CgiHandler::handle_stdout_read(std::string &error_status)
 
     char buffer[4096];
 
-    ssize_t bytes_read = read(
-        _stdout_fd,
-        buffer,
-        sizeof(buffer)
-    );
+    ssize_t bytes_read = read(_stdout_fd,buffer,sizeof(buffer));
 
     if (bytes_read < 0)
     {
@@ -417,6 +425,18 @@ bool CgiHandler::handle_stdout_read(std::string &error_status)
     );
 
     return true;
+}
+
+void CgiHandler::close_stdin()
+{
+    close_fd(_stdin_fd);
+    _stdin_closed = true;
+}
+
+void CgiHandler::close_stdout()
+{
+    close_fd(_stdout_fd);
+    _stdout_closed = true;
 }
 bool CgiHandler::check_child(std::string &error_status)
 {

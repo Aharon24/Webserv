@@ -112,7 +112,65 @@ const LocationConfig* Server::find_location(const std::string &path, const Serve
     return Router(conf).find_location(path);
 }
 
+const CgiConfig *Server::find_cgi_config(const std::string &uri,const LocationConfig *location) const
+{
+    if (location == NULL)
+        return NULL;
 
+    std::string::size_type slash = uri.find_last_of('/');
+    std::string::size_type filename_start = 0;
+
+    if (slash != std::string::npos)
+        filename_start = slash + 1;
+
+    std::string::size_type dot = uri.find_last_of('.');
+
+    if (dot == std::string::npos ||
+        dot <= filename_start ||
+        dot + 1 >= uri.size())
+        return NULL;
+
+    std::string extension = uri.substr(dot);
+
+    for (std::size_t i = 0; i < location->cgi.size(); ++i)
+    {
+        if (location->cgi[i].extension == extension)
+            return &location->cgi[i];
+    }
+
+    return NULL;
+}
+
+bool Server::start_cgi(ClientConnection &client,const HttpRequest &request,const std::string &script_path,const std::string &interpreter_path,std::string &error_status)
+{
+    CgiHandler *cgi = new CgiHandler(
+        client.fd,
+        request,
+        script_path,
+        interpreter_path
+    );
+
+    if (!cgi->start(error_status))
+    {
+        delete cgi;
+        return false;
+    }
+
+    try
+    {
+        _cgi_processes.push_back(cgi);
+    }
+    catch (...)
+    {
+        delete cgi;
+        throw;
+    }
+
+    client.cgi_pending = true;
+    client.last_activity = time(NULL);
+
+    return true;
+}
 
 void Server::collect_listens()
 {
@@ -250,9 +308,7 @@ request.headers["content-type"]; // Multipart Content-Type
     location->return_url;      // Optional redirect for POST
 */
 
-void Server::handle_post(const HttpRequest &request,
-    const ServerConfig &conf,
-    std::string &status, std::string &body)
+void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, std::string &status, std::string &body)
 {
     // Find the location matching the request URI.
     const LocationConfig *location = find_location(request.path, conf);
@@ -304,8 +360,7 @@ void Server::handle_post(const HttpRequest &request,
 
     
 
-    const std::map<std::string, std::string>::const_iterator type =
-        request.headers.find("content-type");
+    const std::map<std::string, std::string>::const_iterator type = request.headers.find("content-type");
     if (type == request.headers.end())
     {
         status = "400 Bad Request";
@@ -536,17 +591,192 @@ namespace
 {
     // POST / DELETE handlers report "<status line>" + body. Success responses
     // are sent as they are; 4xx/5xx ones get the configured (or built-in) error page.
+    std::string trim_cgi(const std::string &value)
+    {
+        std::string::size_type first =
+            value.find_first_not_of(" \t\r");
+
+        if (first == std::string::npos)
+            return "";
+
+        std::string::size_type last =
+            value.find_last_not_of(" \t\r");
+
+        return value.substr(first, last - first + 1);
+    }
+
+    std::string lower_cgi(const std::string &value)
+    {
+        std::string result = value;
+
+        for (std::size_t i = 0; i < result.size(); ++i)
+        {
+            result[i] = static_cast<char>(
+                std::tolower(static_cast<unsigned char>(result[i]))
+            );
+        }
+
+        return result;
+    }
+
+    bool valid_cgi_header_name(const std::string &name)
+    {
+        if (name.empty())
+            return false;
+
+        for (std::size_t i = 0; i < name.size(); ++i)
+        {
+            unsigned char c = static_cast<unsigned char>(name[i]);
+
+            if (!std::isalnum(c) && c != '-' && c != '_')
+                return false;
+        }
+
+        return true;
+    }
+
+    bool build_cgi_http_response(
+        const std::string &output,
+        const std::string &version,
+        std::string &response_data)
+    {
+        std::string::size_type separator =
+            output.find("\r\n\r\n");
+
+        std::size_t separator_size = 4;
+
+        if (separator == std::string::npos)
+        {
+            separator = output.find("\n\n");
+            separator_size = 2;
+        }
+
+        if (separator == std::string::npos)
+            return false;
+
+        std::string header_block = output.substr(0, separator);
+        std::string body = output.substr(separator + separator_size);
+
+        HttpResponse response(200);
+
+        std::string content_type;
+        bool content_type_found = false;
+        bool status_found = false;
+        bool location_found = false;
+
+        std::string::size_type line_start = 0;
+
+        while (line_start < header_block.size())
+        {
+            std::string::size_type line_end =
+                header_block.find('\n', line_start);
+
+            if (line_end == std::string::npos)
+                line_end = header_block.size();
+
+            std::string line =
+                header_block.substr(line_start, line_end - line_start);
+
+            if (!line.empty() && line[line.size() - 1] == '\r')
+                line.erase(line.size() - 1);
+
+            std::string::size_type colon = line.find(':');
+
+            if (colon == std::string::npos)
+                return false;
+
+            std::string name = trim_cgi(line.substr(0, colon));
+            std::string value = trim_cgi(line.substr(colon + 1));
+
+            if (!valid_cgi_header_name(name))
+                return false;
+
+            name = lower_cgi(name);
+
+            if (name == "status")
+            {
+                if (status_found || value.size() < 3)
+                    return false;
+
+                if (!std::isdigit(static_cast<unsigned char>(value[0])) ||
+                    !std::isdigit(static_cast<unsigned char>(value[1])) ||
+                    !std::isdigit(static_cast<unsigned char>(value[2])))
+                    return false;
+
+                if (value.size() > 3 &&
+                    value[3] != ' ' && value[3] != '\t')
+                    return false;
+
+                int code = std::atoi(value.substr(0, 3).c_str());
+
+                if (code < 200 || code > 599)
+                    return false;
+
+                std::string reason = trim_cgi(value.substr(3));
+
+                if (reason.empty())
+                    response.set_status(code);
+                else
+                    response.set_status(code, reason);
+
+                status_found = true;
+            }
+            else if (name == "content-type")
+            {
+                if (content_type_found || value.empty())
+                    return false;
+
+                content_type = value;
+                content_type_found = true;
+            }
+            else if (name == "location")
+            {
+                if (value.empty())
+                    return false;
+
+                response.set_header("Location", value);
+                location_found = true;
+            }
+            else if (name != "content-length" &&
+                     name != "connection" &&
+                     name != "transfer-encoding" &&
+                     name != "date" &&
+                     name != "server")
+            {
+                response.set_header(name, value);
+            }
+
+            if (line_end == header_block.size())
+                break;
+
+            line_start = line_end + 1;
+        }
+
+        if (!content_type_found && !location_found)
+            return false;
+
+        if (!status_found && location_found)
+            response.set_status(302);
+
+        if (content_type.empty())
+            content_type = "text/plain; charset=UTF-8";
+
+        response.set_body(body, content_type);
+        response_data = response.build(version);
+
+        return true;
+    }
     HttpResponse finish_handler_response(const StaticFileHandler &files, const std::string &status, const std::string &body)
     {
         HttpResponse response = HttpResponse::from_status_line(status, body);
-
+    
         if (response.get_status() >= 400)
             return files.make_error(response.get_status());
         return response;
     }
 }
 
-std::string Server::build_response(const HttpRequest &request,const ServerConfig &conf)
+std::string Server::build_response(ClientConnection &client,const HttpRequest &request,const ServerConfig &conf)
 {
     const Router router(conf);
     const StaticFileHandler files(conf, router);
@@ -558,24 +788,60 @@ std::string Server::build_response(const HttpRequest &request,const ServerConfig
         case ROUTE_BAD_REQUEST:
             response = files.make_error(400);
             break;
+
         case ROUTE_FORBIDDEN:
             response = files.make_error(403);
             break;
+
         case ROUTE_REDIRECT:
-            response = files.make_redirect(route.redirect_code, route.redirect_url);
+            response = files.make_redirect(
+                route.redirect_code,
+                route.redirect_url
+            );
             break;
+
         case ROUTE_METHOD_NOT_ALLOWED:
             response = files.make_error(405);
             response.set_header("Allow", route.allow);
             break;
+
         case ROUTE_OK:
         {
-            // Handlers receive the decoded, normalized path.
             HttpRequest routed = request;
             std::string status;
             std::string body;
 
             routed.path = route.uri;
+
+            if (request.method == "GET" || request.method == "POST")
+            {
+                const CgiConfig *cgi_config =
+                    find_cgi_config(route.uri, route.location);
+
+                if (cgi_config != NULL)
+                {
+                    std::string error_status;
+
+                    if (start_cgi(
+                            client,
+                            routed,
+                            route.fs_path,
+                            cgi_config->interpreter,
+                            error_status))
+                    {
+                        return "";
+                    }
+
+                    int error_code = std::atoi(error_status.c_str());
+
+                    if (error_code < 400 || error_code > 599)
+                        error_code = 500;
+
+                    response = files.make_error(error_code);
+                    break;
+                }
+            }
+
             if (request.method == "GET")
                 response = files.handle_get(routed, route);
             else if (request.method == "POST")
@@ -591,6 +857,7 @@ std::string Server::build_response(const HttpRequest &request,const ServerConfig
             break;
         }
     }
+
     return response.build(request.version);
 }
 
@@ -658,9 +925,10 @@ void Server::parse_and_respond(ClientConnection &client, HttpParser &http_parser
         std::cout << "Query: [" << request.query_string << "]" << std::endl;
         std::cout << "========================" << std::endl;
 
-        client.response_buffer = build_response(request, conf);
+        client.response_buffer = build_response(client, request, conf);
         client.request_complete = true;
-        client.response_ready = true;
+        if (!client.cgi_pending)
+            client.response_ready = true;
     }
     catch(const std::exception &e)
     {
@@ -1154,6 +1422,156 @@ void Server::check_timeouts(std::vector<ClientConnection> &clients, time_t timeo
     }
 }
 
+
+void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vector<ClientConnection> &clients,std::size_t polled_client_count,std::size_t polled_cgi_count)
+{
+    const std::size_t cgi_base =
+        _server_fds.size() + polled_client_count;
+
+    std::vector<CgiHandler *> finished_cgi;
+
+    for (std::size_t i = 0;
+         i < polled_cgi_count && i < _cgi_processes.size();
+         ++i)
+    {
+        const std::size_t input_index = cgi_base + i * 2;
+        const std::size_t output_index = input_index + 1;
+
+        if (output_index >= fds.size())
+            break;
+
+        CgiHandler *cgi = _cgi_processes[i];
+
+        if (cgi == NULL)
+            continue;
+
+        // Find the client that started this CGI process.
+        std::vector<ClientConnection>::iterator client_it =
+            clients.begin();
+
+        while (client_it != clients.end() &&
+               client_it->fd != cgi->get_client_fd())
+        {
+            ++client_it;
+        }
+
+        bool client_exists = (client_it != clients.end());
+
+        if (!client_exists)
+            cgi->terminate();
+
+        bool io_ok = true;
+        std::string error_status;
+
+        if (client_exists && client_it->cgi_pending)
+        {
+            // Handle CGI stdin.
+            short input_events = fds[input_index].revents;
+        
+            if (cgi->get_stdin_fd() != -1)
+            {
+                if (input_events & POLLNVAL)
+                    io_ok = false;
+                else if (input_events & (POLLERR | POLLHUP))
+                    cgi->close_stdin();
+                else if (input_events & POLLOUT)
+                {
+                    if (!cgi->handle_stdin_write(error_status))
+                        io_ok = false;
+                }
+            }
+        
+            // Handle CGI stdout.
+            short output_events = fds[output_index].revents;
+        
+            if (cgi->get_stdout_fd() != -1)
+            {
+                if (output_events & (POLLNVAL | POLLERR))
+                    io_ok = false;
+                else if (output_events & POLLIN)
+                {
+                    if (!cgi->handle_stdout_read(error_status))
+                        io_ok = false;
+                }
+                else if (output_events & POLLHUP)
+                    cgi->close_stdout();
+            }
+        }
+
+        // Check whether the child process has exited.
+        if (!cgi->check_child(error_status))
+            io_ok = false;
+
+        // A pipe or child-process error produces 502.
+        if (!io_ok && client_exists && client_it->cgi_pending)
+        {
+            cgi->terminate();
+
+            const ServerConfig &conf = get_server_config(*client_it);
+            const Router router(conf);
+            const StaticFileHandler files(conf, router);
+
+            client_it->response_buffer =
+                files.make_error(502).build(cgi->get_http_version());
+
+            client_it->cgi_pending = false;
+            client_it->response_ready = true;
+            client_it->last_activity = time(NULL);
+        }
+
+        // CGI is complete only after child exit and both pipes close.
+        if (cgi->is_finished())
+        {
+            if (client_exists && client_it->cgi_pending)
+            {
+                std::string cgi_response;
+
+                if (cgi->was_successful() &&
+                    build_cgi_http_response(
+                        cgi->get_output(),
+                        cgi->get_http_version(),
+                        cgi_response))
+                {
+                    client_it->response_buffer = cgi_response;
+                }
+                else
+                {
+                    const ServerConfig &conf =
+                        get_server_config(*client_it);
+
+                    const Router router(conf);
+                    const StaticFileHandler files(conf, router);
+
+                    client_it->response_buffer =
+                        files.make_error(502).build(cgi->get_http_version());
+                }
+
+                client_it->cgi_pending = false;
+                client_it->response_ready = true;
+                client_it->last_activity = time(NULL);
+            }
+
+            finished_cgi.push_back(cgi);
+        }
+    }
+
+    // Remove completed CGI handlers after processing the original poll array.
+    for (std::size_t i = 0; i < finished_cgi.size(); ++i)
+    {
+        for (std::vector<CgiHandler *>::iterator it =
+                 _cgi_processes.begin();
+             it != _cgi_processes.end();
+             ++it)
+        {
+            if (*it == finished_cgi[i])
+            {
+                delete *it;
+                _cgi_processes.erase(it);
+                break;
+            }
+        }
+    }
+}
 void Server::run(HttpParser &parser)
 {
     std::vector<ClientConnection> clients;
@@ -1163,23 +1581,33 @@ void Server::run(HttpParser &parser)
     {
         check_timeouts(clients, TIMEOUT_SECONDS);
 
-        std::size_t polled_client_count = clients.size();
+        const std::size_t polled_client_count = clients.size();
+        const std::size_t polled_cgi_count = _cgi_processes.size();
 
-        std::vector<struct pollfd> fds;
-        fds = build_poll_fds(clients);
+        std::vector<struct pollfd> fds = build_poll_fds(clients);
 
         int result = wait_for_events(fds, 1000);
 
-        if (result <= 0)
+        if (result < 0)
             continue;
 
-        accept_ready_connections(fds, clients);
+        if (result > 0)
+        {
+            accept_ready_connections(fds, clients);
 
-        process_client_events(
+            process_client_events(
+                fds,
+                clients,
+                parser,
+                polled_client_count
+            );
+        }
+
+        process_cgi_events(
             fds,
             clients,
-            parser,
-            polled_client_count
+            polled_client_count,
+            polled_cgi_count
         );
     }
 }

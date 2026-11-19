@@ -50,6 +50,12 @@ public:
 
     bool start(std::string &error_status);
 
+    const std::string &get_http_version() const;
+    bool was_successful() const;
+
+
+    void close_stdin();
+    void close_stdout();
     int get_client_fd() const;
     int get_stdin_fd() const;
     int get_stdout_fd() const;

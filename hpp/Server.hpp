@@ -93,13 +93,14 @@ private:
     Server(const Server &other);
     Server &operator=(const Server &other);
     void set_nonblocking(int fd);
-    std::string build_response(const HttpRequest &request,const ServerConfig &conf);
+    std::string build_response(ClientConnection &client,const HttpRequest &request,const ServerConfig &conf);
     const ServerConfig *find_server_config(const std::string &host) const;
 
     // CGI
-    bool start_cgi(ClientConnection &client, const HttpRequest &request, const ServerConfig &conf);
-    void process_cgi_events(const std::vector<struct pollfd> &fds, std::vector<ClientConnection> &clients);
+    bool start_cgi(ClientConnection &client,const HttpRequest &request,const std::string &script_path,const std::string &interpreter_path,std::string &error_status);
+    void process_cgi_events(const std::vector<struct pollfd> &fds,std::vector<ClientConnection> &clients,std::size_t polled_client_count,std::size_t polled_cgi_count);
     void remove_cgi_for_client(int client_fd);
+    const CgiConfig *find_cgi_config(const std::string &uri, const LocationConfig *location) const;
 
 
 public:

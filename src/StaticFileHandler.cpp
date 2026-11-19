@@ -247,7 +247,7 @@ HttpResponse StaticFileHandler::serve_directory(const HttpRequest &request, cons
 
     if (route.location != NULL && route.location->autoindex)
         return build_autoindex(route.fs_path, route.uri);
-    return make_error(403);
+    return make_error(404);
 }
 
 HttpResponse StaticFileHandler::handle_get(const HttpRequest &request, const RouteResult &route) const
