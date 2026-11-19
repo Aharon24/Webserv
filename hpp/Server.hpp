@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <poll.h> 
 #include <vector>
+#include <cstdio>
 
 #include <csignal>
 #include <ctime>
@@ -106,7 +107,7 @@ public:
     ~Server();
 
     // POST DELETE (GET is handled by StaticFileHandler)
-    void handle_post(const HttpRequest &request, std::string &status, std::string &body);
+    void handle_post(const HttpRequest &request, const ServerConfig &conf, std::string &status, std::string &body);
     void handle_delete(const HttpRequest &request, const ServerConfig &conf, std::string &status, std::string &body);
     std::string create_response_data(const HttpRequest &request, std::string &status, std::string &body);
     void remove_client(int client_fd, std::vector<ClientConnection> &clients);

@@ -2,6 +2,9 @@
 #include "Router.hpp"
 #include "StaticFileHandler.hpp"
 #include "HttpResponse.hpp"
+#include "Upload.hpp"
+
+#include <set>
 
 
 Server::Server(const std::vector<ServerConfig> &configs) : _configs(configs)
@@ -234,15 +237,154 @@ request.path;                    // "/uploads"
 request.body;                    // Complete, correctly framed body
 request.headers["content-type"]; // Multipart Content-Type
 */
-void Server::handle_post(const HttpRequest &request, std::string &status, std::string &body)
+
+
+/**
+
+    location->allowed_methods; // Must include "POST"
+    location->upload_enabled;  // Must be true
+    location->upload_path;     // Must be a valid directory path
+    location->root;            // Used to resolve relative upload_path
+    location->path;            // Used to resolve relative upload_path
+    location->return_code;     // Optional redirect for POST
+    location->return_url;      // Optional redirect for POST
+*/
+
+void Server::handle_post(const HttpRequest &request,
+    const ServerConfig &conf,
+    std::string &status, std::string &body)
 {
-        
+    // Find the location matching the request URI.
+    const LocationConfig *location = find_location(request.path, conf);
+
     std::cout << "POST method received!" << std::endl;
     std::cout << "Request path: " << request.path << std::endl;
 
-    status = "501 Not Implemented";
-    body = "POST is not implemented yet\n";
+    if (location != NULL)
+        std::cout << "Location found: " << location->path << std::endl;
+    else
+        std::cout << "Location not found" << std::endl;
+
+    if (location != NULL && !location->allowed_methods.empty())
+    {
+        bool allowed = false;
+    
+        for(std::size_t i = 0; i < location->allowed_methods.size(); ++i)
+        {
+            if (location->allowed_methods[i] == "POST")
+            {
+                allowed = true;
+                break;
+            }
+        }
+    
+        if (!allowed)
+        {
+            status = "405 Method Not Allowed";
+            body = "405 Method Not Allowed\n";
+            return;
+        }
+    }
+
+    // Check whether file uploads are enabled.
+    if (location == NULL || !location->upload_enabled)
+    {
+        status = "403 Forbidden";
+        body = "File uploads are not allowed\n";
+        return;
+    }
+
+    // Check whether the upload destination is configured.
+    if (location->upload_path.empty())
+    {
+        status = "500 Internal Server Error";
+        body = "Upload path is not configured\n";
+        return;
+    }
+
+    
+
+    const std::map<std::string, std::string>::const_iterator type =
+        request.headers.find("content-type");
+    if (type == request.headers.end())
+    {
+        status = "400 Bad Request";
+        body = "Missing Content-Type\n";
+        return;
+    }
+    std::string media_type = type->second.substr(0, type->second.find(';'));
+    const std::string::size_type last = media_type.find_last_not_of(" \t");
+    media_type.erase(last == std::string::npos ? 0 : last + 1);
+    for (std::size_t i = 0; i < media_type.size(); ++i)
+        if (media_type[i] >= 'A' && media_type[i] <= 'Z')
+            media_type[i] = static_cast<char>(media_type[i] + ('a' - 'A'));
+    if (media_type != "multipart/form-data")
+    {
+        status = "415 Unsupported Media Type";
+        body = "Expected multipart/form-data\n";
+        return;
+    }
+
+    std::vector<Upload::UploadedFile> files;
+    std::string error;
+    if (!Upload::parse_multipart(type->second, request.body, files, error)
+        || files.empty())
+    {
+        status = "400 Bad Request";
+        body = "Invalid multipart upload or no files provided\n";
+        return;
+    }
+
+    // Detect duplicate names before creating any files.
+    std::set<std::string> names;
+    for (std::size_t i = 0; i < files.size(); ++i)
+    {
+        if (!names.insert(files[i].filename).second)
+        {
+            status = "409 Conflict";
+            body = "Duplicate upload filename\n";
+            return;
+        }
+    }
+    for (std::size_t i = 0; i < files.size(); ++i)
+    {
+        if (!Upload::save_file(location->upload_path, files[i].filename,
+                               files[i].content))
+        {
+            const int saved_error = errno;
+            bool cleaned = true;
+            // Roll back only files successfully created by this request.
+            for (std::size_t j = 0; j < i; ++j)
+            {
+                std::string path = location->upload_path;
+                if (path[path.size() - 1] != '/')
+                    path += '/';
+                path += files[j].filename;
+                if (std::remove(path.c_str()) != 0)
+                    cleaned = false;
+            }
+            if (!cleaned)
+                status = "500 Internal Server Error";
+            else if (saved_error == EEXIST)
+                status = "409 Conflict";
+            else if (saved_error == EACCES || saved_error == EPERM
+                     || saved_error == EROFS)
+                status = "403 Forbidden";
+            else if (saved_error == EINVAL)
+                status = "400 Bad Request";
+            else
+                status = "500 Internal Server Error";
+            body = status + "\n";
+            return;
+        }
+    }
+    status = "201 Created";
+    body = "Files uploaded\n";
 }
+
+
+
+
 
 /*
 ** DELETE integration TODO:
@@ -251,9 +393,9 @@ void Server::handle_post(const HttpRequest &request, std::string &status, std::s
 ** - Server::build_response()/build_file_path(): use the same normalized path;
 **   replace substring ".." checks with component checks in the shared router.
 ** - Server::create_response_data(): add Allow for 405; omit Content-Length for 204.
-** - Verify lstat() against the official subject's allowed functions.
-** - TOCTOU: lstat() + unlink() requires a stable directory tree. Review permitted
-**   descriptor-relative APIs before claiming safety against concurrent changes.
+** - Confirm std::remove() permission under the subject's external-function list.
+** - stat() follows symlinks: lexical root checks do not prevent symlink escapes.
+** - TOCTOU remains between stat() and std::remove(); review permitted APIs.
 */
 
 void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,std::string &status, std::string &body)
@@ -298,6 +440,10 @@ void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,
     const std::string file_path = build_file_path(request, location, conf);
 
     std::string normalized_root = root;
+    // Match the trailing-slash handling used by Router::build_path().
+    while (normalized_root.size() > 1
+        && normalized_root[normalized_root.size() - 1] == '/')
+        normalized_root.erase(normalized_root.size() - 1);
     if (normalized_root[normalized_root.size() - 1] != '/')
         normalized_root += '/';
 
@@ -340,43 +486,9 @@ void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,
         return;
     }
 
-    // Inspect every prefix, including the configured root, without following links.
-    // This check does not prevent another process from replacing a directory.
+    // stat() follows symlinks; the root prefix above is only a lexical check.
     struct stat info;
-    bool checked = false;
-    start = 0;
-    while (start < file_path.size())
-    {
-        std::size_t end = file_path.find('/', start);
-        if (end == std::string::npos)
-            end = file_path.size();
-        if (end == start)
-        {
-            start = end + 1;
-            continue;
-        }
-        const std::string prefix = file_path.substr(0, end);
-        if (lstat(prefix.c_str(), &info) == -1)
-        {
-            checked = false;
-            break;
-        }
-        if (S_ISLNK(info.st_mode))
-        {
-            status = "403 Forbidden";
-            body = "403 Forbidden\n";
-            return;
-        }
-        if (end < file_path.size() && !S_ISDIR(info.st_mode))
-        {
-            status = "404 Not Found";
-            body = "404 Not Found\n";
-            return;
-        }
-        checked = true;
-        start = end + 1;
-    }
-    if (!checked)
+    if (stat(file_path.c_str(), &info) == -1)
     {
         if (errno == ENOENT || errno == ENOTDIR)
             status = "404 Not Found";
@@ -395,7 +507,7 @@ void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,
         return;
     }
 
-    if (unlink(file_path.c_str()) == -1)
+    if (std::remove(file_path.c_str()) != 0)
     {
         if (errno == ENOENT || errno == ENOTDIR)
             status = "404 Not Found";
@@ -468,7 +580,7 @@ std::string Server::build_response(const HttpRequest &request,const ServerConfig
                 response = files.handle_get(routed, route);
             else if (request.method == "POST")
             {
-                handle_post(routed, status, body);
+                handle_post(routed, conf, status, body);
                 response = finish_handler_response(files, status, body);
             }
             else
@@ -509,82 +621,9 @@ void Server::remove_client(int client_fd, std::vector<ClientConnection> &clients
 
 bool Server::get_content_length(const std::string &headers_part,std::size_t &content_length) const
 {
-    content_length = 0;
-    bool found = false;
-    std::string::size_type line_start = 0;
-
-    while (line_start < headers_part.size())
-    {
-        std::string::size_type line_end = headers_part.find("\r\n", line_start);
-
-        if (line_end == std::string::npos)
-            line_end = headers_part.size();
-
-        std::string::size_type colon = headers_part.find(':', line_start);
-
-        if (colon != std::string::npos && colon < line_end)
-        {
-            std::string name = headers_part.substr(line_start, colon - line_start);
-
-            for (std::string::size_type i = 0; i < name.size(); ++i)
-            {
-                if (name[i] >= 'A' && name[i] <= 'Z')
-                    name[i] = name[i] - 'A' + 'a';
-            }
-
-            if (name == "content-length")
-            {
-                if (found)
-                    return false;
-
-                found = true;
-
-                std::string::size_type start = colon + 1;
-
-                while (start < line_end &&
-                       (headers_part[start] == ' ' ||
-                        headers_part[start] == '\t'))
-                    ++start;
-
-                std::string::size_type end = line_end;
-
-                while (end > start && (headers_part[end - 1] == ' ' || headers_part[end - 1] == '\t'))
-                    --end;
-
-                if (start == end)
-                    return false;
-
-                std::size_t value = 0;
-
-                for (std::string::size_type i = start; i < end; ++i)
-                {
-                    if (headers_part[i] < '0' ||
-                        headers_part[i] > '9')
-                        return false;
-
-                    std::size_t digit =
-                        static_cast<std::size_t>(headers_part[i] - '0');
-
-                    if (value >
-                        (std::numeric_limits<std::size_t>::max() - digit) / 10)
-                        return false;
-
-                    value = value * 10 + digit;
-                }
-
-                content_length = value;
-            }
-        }
-
-        if (line_end == headers_part.size())
-            break;
-
-        line_start = line_end + 2;
-    }
-
-    return true;
+    bool chunked = false;
+    return HttpParser::get_body_framing(headers_part, chunked, content_length);
 }
-
 
 
 bool Server::check_max_body_size(ClientConnection &client, std::size_t content_length, const ServerConfig &conf)
@@ -802,7 +841,21 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
     std::string headers_part = client.request_buffer.substr(0, header_end);
     std::string::size_type body_start = header_end + 4;
 
-    if (is_chunked(headers_part))
+    bool chunked = false;
+    std::size_t content_length = 0;
+    if (!HttpParser::get_body_framing(headers_part, chunked, content_length))
+    {
+        HttpRequest dummy_req;
+        dummy_req.version = "HTTP/1.1";
+        std::string status = "400 Bad Request";
+        std::string body = status + "\n";
+        client.response_buffer = create_response_data(dummy_req, status, body) + body;
+        client.request_complete = true;
+        client.response_ready = true;
+        return true;
+    }
+
+    if (chunked)
     {
         std::string decoded_body;
 
@@ -837,24 +890,6 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
     }
     else
     {
-        std::size_t content_length = 0;
-
-        if (!get_content_length(headers_part, content_length))
-        {
-            HttpRequest dummy_req;
-            dummy_req.version = "HTTP/1.1";
-
-            std::string status = "400 Bad Request";
-            std::string body = status + "\n";
-
-            client.response_buffer =
-                create_response_data(dummy_req, status, body) + body;
-
-            client.request_complete = true;
-            client.response_ready = true;
-            return true;
-        }
-
         if (check_max_body_size(client, content_length, conf))
             return true;
 

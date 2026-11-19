@@ -28,6 +28,10 @@ class HttpParser
 {
 public:
     HttpRequest parse(const std::string &raw_request);
+
+    // Shared validation before waiting for body bytes and parsing the full request.
+    static bool get_body_framing(const std::string &headers_part,
+                                 bool &chunked, std::size_t &content_length);
     void parse_head(const std::string &line, HttpRequest &request, bool &host_found);
 
 
