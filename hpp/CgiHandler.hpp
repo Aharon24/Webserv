@@ -7,6 +7,7 @@
 #include <ctime>
 #include <sys/types.h>
 #include "HttpRequest.hpp"
+#include <limits.h>
 
 class CgiHandler
 {

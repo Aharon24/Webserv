@@ -213,8 +213,8 @@ void Parser::parse_listen(ServerConfig &conf, bool &listen_defined)
         conf.ip = listen.ip;
         conf.port = listen.port;
     }
-    std::cout << "Listen IP: " << ip << std::endl;
-    std::cout << "Listen port: " << port << std::endl;
+    // std::cout << "Listen IP: " << ip << std::endl;
+    // std::cout << "Listen port: " << port << std::endl;
 }
 
 
@@ -361,8 +361,8 @@ void Parser::parse_location_return(LocationConfig &location)
         throw std::runtime_error("Expected ';'  after return");
     ++_index;
 
-    std::cout << "return code -> " << location.return_code << "\n";
-    std::cout << "return URL -> " << location.return_url  << "\n";
+    // std::cout << "return code -> " << location.return_code << "\n";
+    // std::cout << "return URL -> " << location.return_url  << "\n";
 }
 
 

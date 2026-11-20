@@ -83,7 +83,7 @@ int init_webserv(std::string &path)
             
         for (std::size_t i = 0; i < configs.size(); ++i)
             pars.validate_root(configs[i]);
-        print_conf(configs);
+        // print_conf(configs);
         Server serv(configs);
         serv.create_socket();
         std::cout << "Socket created successfully" << std::endl;

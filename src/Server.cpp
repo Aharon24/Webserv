@@ -193,16 +193,16 @@ void Server::collect_listens()
             _listen_config_indices.push_back(i);
         }
     }
-    std::cout << "\n========== COLLECTED LISTENS ==========" << std::endl;
-    for (std::size_t i = 0; i < _listens.size(); ++i)
-    {
-        std::cout << "Listen index: " << i << std::endl;
-        std::cout << "IP: " << _listens[i].ip << std::endl;
-        std::cout << "Port: " << _listens[i].port << std::endl;
-        std::cout << "_listen_config_indices[" << i << "] = "
-              << _listen_config_indices[i] << std::endl;
-        std::cout << "-----------------------------" << std::endl;
-    }
+    // std::cout << "\n========== COLLECTED LISTENS ==========" << std::endl;
+    // for (std::size_t i = 0; i < _listens.size(); ++i)
+    // {
+    //     std::cout << "Listen index: " << i << std::endl;
+    //     std::cout << "IP: " << _listens[i].ip << std::endl;
+    //     std::cout << "Port: " << _listens[i].port << std::endl;
+    //     std::cout << "_listen_config_indices[" << i << "] = "
+    //           << _listen_config_indices[i] << std::endl;
+    //     std::cout << "-----------------------------" << std::endl;
+    // }
 }
 
 // GET is implemented by StaticFileHandler (see build_response()).
@@ -345,10 +345,19 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
     const std::map<std::string, std::string>::const_iterator type =
         request.headers.find("content-type");
 
+
     if (type == request.headers.end())
     {
-        status = "400 Bad Request";
-        body = "Missing Content-Type\n";
+        if (request.body.empty())
+        {
+            status = "200 OK";
+            body = "POST received\n";
+        }
+        else
+        {
+            status = "415 Unsupported Media Type";
+            body = "Missing Content-Type\n";
+        }
         return;
     }
 
@@ -389,8 +398,8 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
 
     if (media_type != "multipart/form-data")
     {
-        status = "415 Unsupported Media Type";
-        body = "Expected multipart/form-data\n";
+        status = "200 OK";
+        body = "POST received\n";
         return;
     }
 
@@ -878,7 +887,7 @@ std::string Server::build_response(ClientConnection &client, const HttpRequest &
                             routed,
                             route.fs_path,
                             cgi_config->interpreter,
-                            "",
+                            routed.path,
                             error_status))
                     {
                         return "";
@@ -931,8 +940,8 @@ void Server::remove_client(int client_fd,std::vector<ClientConnection> &clients)
     {
         if (it->fd == client_fd)
         {
-            std::cout << "Closing client FD: "
-                      << it->fd << std::endl;
+            // std::cout << "Closing client FD: "
+            //           << it->fd << std::endl;
 
             // Terminate CGI belonging to this client.
             for (std::size_t i = 0; i < _cgi_processes.size(); ++i)
@@ -988,14 +997,14 @@ void Server::parse_and_respond(ClientConnection &client, HttpParser &http_parser
     try
     {
         HttpRequest request = http_parser.parse(client.request_buffer);
-        std::cout << "===== HTTP REQUEST =====" << std::endl;
-        std::cout << "Method:  " << request.method << std::endl;
-        std::cout << "Path:    " << request.path << std::endl;
-        std::cout << "Version: " << request.version << std::endl;
-        std::cout << "Host:    " << request.host << std::endl;
-        std::cout << "Path: [" << request.path << "]" << std::endl;
-        std::cout << "Query: [" << request.query_string << "]" << std::endl;
-        std::cout << "========================" << std::endl;
+        // std::cout << "===== HTTP REQUEST =====" << std::endl;
+        // std::cout << "Method:  " << request.method << std::endl;
+        // std::cout << "Path:    " << request.path << std::endl;
+        // std::cout << "Version: " << request.version << std::endl;
+        // std::cout << "Host:    " << request.host << std::endl;
+        // std::cout << "Path: [" << request.path << "]" << std::endl;
+        // std::cout << "Query: [" << request.query_string << "]" << std::endl;
+        // std::cout << "========================" << std::endl;
 
         client.response_buffer = build_response(client, request, conf);
         client.request_complete = true;
@@ -1023,46 +1032,68 @@ void Server::parse_and_respond(ClientConnection &client, HttpParser &http_parser
     }
 }
 
-
 bool Server::read_client_data(ClientConnection &client, bool &stop_processing)
 {
     const std::size_t MAX_HEADER_SIZE = 32 * 1024;
+    const std::size_t MAX_READ_PER_EVENT = 1024 * 1024;
 
-    char buffer[4096];
+    char buffer[64 * 1024];
+    std::size_t total_read = 0;
+
     stop_processing = false;
 
-    ssize_t bytes_read = recv(client.fd, buffer, sizeof(buffer), 0);
-
-    if (bytes_read == 0)
-        return false;
-
-    if (bytes_read < 0)
+    while (total_read < MAX_READ_PER_EVENT)
     {
-        stop_processing = true;
-        return true;
-    }
+        std::size_t bytes_to_read = sizeof(buffer);
+        std::size_t remaining = MAX_READ_PER_EVENT - total_read;
 
-    client.last_activity = time(NULL);
+        if (bytes_to_read > remaining)
+            bytes_to_read = remaining;
 
-    client.request_buffer.append(
-        buffer,
-        static_cast<std::string::size_type>(bytes_read)
-    );
+        ssize_t bytes_read = recv(
+            client.fd,
+            buffer,
+            bytes_to_read,
+            0
+        );
 
-    std::string::size_type header_end = client.request_buffer.find("\r\n\r\n");
+        if (bytes_read == 0)
+        {
+            if (total_read == 0)
+                return false;
+            break;
+        }
 
-    if (header_end == std::string::npos)
-    {
-        if (client.request_buffer.size() > MAX_HEADER_SIZE)
+        if (bytes_read < 0)
+            break;
+
+        client.last_activity = time(NULL);
+
+        client.request_buffer.append(
+            buffer,
+            static_cast<std::size_t>(bytes_read)
+        );
+
+        total_read += static_cast<std::size_t>(bytes_read);
+
+        std::string::size_type header_end =
+            client.request_buffer.find("\r\n\r\n");
+
+        if (header_end == std::string::npos)
+        {
+            if (client.request_buffer.size() > MAX_HEADER_SIZE)
+            {
+                client.header_too_large = true;
+                stop_processing = true;
+                return true;
+            }
+        }
+        else if (header_end + 4 > MAX_HEADER_SIZE)
         {
             client.header_too_large = true;
             stop_processing = true;
+            return true;
         }
-    }
-    else if (header_end + 4 > MAX_HEADER_SIZE)
-    {
-        client.header_too_large = true;
-        stop_processing = true;
     }
 
     return true;
@@ -1201,7 +1232,7 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
     {
         std::string decoded_body;
 
-        ChunkedStatus chunked_status = HttpParser::unchunk_body(client.request_buffer.substr(body_start), decoded_body, conf.client_max_body_size);
+    ChunkedStatus chunked_status = HttpParser::unchunk_body(client.request_buffer.substr(body_start),decoded_body,max_body_size);
 
         if (chunked_status == CHUNKED_INCOMPLETE)
             return true;
@@ -1277,7 +1308,7 @@ bool Server::handle_client_write(ClientConnection &client)
 
     if (client.sent_bytes < client.response_buffer.size())
         return true;
-    std::cout << "Response fully sent to client FD: " << client.fd << std::endl;
+    // std::cout << "Response fully sent to client FD: " << client.fd << std::endl;
 
     bool close_connection =(client.response_buffer.find("Connection: close") != std::string::npos);
     if (close_connection)
@@ -1403,7 +1434,7 @@ void Server::accept_ready_connections(const std::vector<struct pollfd> &fds, std
 
             if (client_fd != -1)
             {
-                std::cout << "Accepted client: " << client_fd << std::endl;
+                // std::cout << "Accepted client: " << client_fd << std::endl;
                 clients.push_back(ClientConnection(client_fd, i));
             }
         }
@@ -1552,6 +1583,8 @@ void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vecto
                 {
                     if (!cgi->handle_stdin_write(error_status))
                         io_ok = false;
+                    else
+                        client_it->last_activity = time(NULL);
                 }
             }
         
@@ -1566,6 +1599,8 @@ void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vecto
                 {
                     if (!cgi->handle_stdout_read(error_status))
                         io_ok = false;
+                    else
+                        client_it->last_activity = time(NULL);
                 }
                 else if (output_events & POLLHUP)
                     cgi->close_stdout();
@@ -1683,7 +1718,7 @@ std::size_t Server::get_request_body_limit(const std::string &headers_part,const
 void Server::run(HttpParser &parser)
 {
     std::vector<ClientConnection> clients;
-    const time_t TIMEOUT_SECONDS = 5;
+    const time_t TIMEOUT_SECONDS = 160;
 
     while (true)
     {

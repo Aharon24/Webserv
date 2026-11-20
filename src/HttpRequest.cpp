@@ -239,7 +239,7 @@ HttpRequest HttpParser::parse(const std::string &raw_request)
     std::string extra;
     bool host_found = false;
 
-    std::cout << "line ->" << raw_request << std::endl;
+    // std::cout << "line ->" << raw_request << std::endl;
     if (!std::getline(stream, line))
         throw std::runtime_error("Missing request line");
     if (!line.empty() && line[line.size() - 1] == '\r')

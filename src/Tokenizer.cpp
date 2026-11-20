@@ -213,7 +213,7 @@ void Tokenizer::create_tokens()
     while (std::getline(file, line)) {
         str_to_token(line);
     }
-    print_tokens();
+    // print_tokens();
     file.close();
 
 

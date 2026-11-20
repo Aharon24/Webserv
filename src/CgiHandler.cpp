@@ -41,6 +41,32 @@ namespace
         return fcntl(fd, F_SETFD, flags | FD_CLOEXEC) != -1;
     }
 
+    bool make_absolute_path(const std::string &path,std::string &absolute_path)
+    {
+        if (path.empty())
+            return false;
+
+        if (path[0] == '/')
+        {
+            absolute_path = path;
+            return true;
+        }
+
+        char cwd[PATH_MAX];
+
+        if (getcwd(cwd, sizeof(cwd)) == NULL)
+            return false;
+
+        absolute_path = cwd;
+
+        if (absolute_path[absolute_path.size() - 1] != '/')
+            absolute_path += '/';
+
+        absolute_path += path;
+
+        return true;
+    }
+
     std::string number_to_string(std::size_t number)
     {
         std::ostringstream ss;
@@ -177,6 +203,19 @@ bool CgiHandler::start(std::string &error_status)
         _script_path.find('\0') != std::string::npos ||
         _interpreter_path.find('\0') != std::string::npos)
         return false;
+    std::string interpreter_path;
+
+    if (!make_absolute_path(_interpreter_path, interpreter_path))
+    {
+        error_status = "500 Internal Server Error";
+        return false;
+    }
+
+    if (access(interpreter_path.c_str(), X_OK) == -1)
+    {
+        error_status = "500 Internal Server Error";
+        return false;
+    }
 
     struct stat info;
 
@@ -216,8 +255,7 @@ bool CgiHandler::start(std::string &error_status)
     if (script_name.empty())
         return false;
 
-    std::vector<std::string> env =
-        build_environment(_request, _script_path, _path_info);
+    std::vector<std::string> env = build_environment(_request, _script_path, _path_info);
 
     std::vector<char *> envp;
 
@@ -228,7 +266,7 @@ bool CgiHandler::start(std::string &error_status)
 
     char *argv[3];
 
-    argv[0] = const_cast<char *>(_interpreter_path.c_str());
+    argv[0] = const_cast<char *>(interpreter_path.c_str());
     argv[1] = const_cast<char *>(script_name.c_str());
     argv[2] = NULL;
 
@@ -296,7 +334,7 @@ bool CgiHandler::start(std::string &error_status)
         if (chdir(script_dir.c_str()) == -1)
             _exit(127);
 
-        execve(_interpreter_path.c_str(), argv, &envp[0]);
+        execve(interpreter_path.c_str(), argv, &envp[0]);
 
         _exit(127);
     }

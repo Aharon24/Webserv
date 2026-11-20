@@ -13,6 +13,7 @@ FILE: hpp/CgiHandler.hpp
 #include <ctime>
 #include <sys/types.h>
 #include "HttpRequest.hpp"
+#include <limits.h>
 
 class CgiHandler
 {
@@ -49,7 +50,8 @@ public:
         int client_fd,
         const HttpRequest &request,
         const std::string &script_path,
-        const std::string &interpreter_path
+        const std::string &interpreter_path,
+        const std::string &path_info
     );
 
     ~CgiHandler();
@@ -199,85 +201,6 @@ public:
 
 
 ========================================
-FILE: hpp/parser.hpp
-========================================
-
-#ifndef PARSER_HPP
-#define PARSER_HPP
-
-#include <vector>
-#include <stdexcept>
-#include <cstdlib>
-#include <string>
-#include <unistd.h>
-#include <stdexcept>
-#include <sys/stat.h>
-#include <limits>
-#include "ServerConfig.hpp"
-#include "Tokenizer.hpp"
-
-
-class Parser
-{
-private:
-    std::vector<Token> _tokens;
-    size_t _index;
-
-public:
-    Parser();
-    Parser(const std::vector<Token>& _tokens);
-    Parser(const Parser &ot);
-    Parser& operator=(const Parser &ot);
-
-    ~Parser();
-    
-    void print_tokens( void );
-    void set_token(const std::vector<Token>& _tokens);
-
-    std::vector<ServerConfig> start_parse(void);
-    
-    void parse_server(ServerConfig &conf);
-    void parse_listen(ServerConfig &conf, bool &listen_defined);
-    void parse_root(ServerConfig &conf, bool &root_defined);
-    void parse_index(ServerConfig &conf, bool &index_defined);
-    void parse_server_name(ServerConfig &conf, bool &server_name_defined);
-    void parse_error_page(ServerConfig &conf);
-
-    void parse_client_max_body_size(ServerConfig &conf, bool &defined);
-    void bit_size(const std::string &suffix, std::size_t &multiplier);
-    void get_number_multiplayer( const std::string &number_part, std::size_t &number);
-
-    void warn_duplicate_listen_without_server_name(const std::vector<ServerConfig> &servers) const;
-
-    
-
-// listen
-    bool is_valid_ipv4(const std::string &ip);
-    bool is_valid_port(const std::string &port);
-
-// Location
-    void parse_location(ServerConfig &conf);
-    void parse_location_directives(LocationConfig &location);
-    void parse_location_root(LocationConfig &location);
-    void parse_location_index(LocationConfig &location);
-    void check_location(const ServerConfig &conf) const;
-    void validate_root(const ServerConfig &conf) const;
-    void parse_location_allowed_methods(LocationConfig &location);
-    void parse_location_return(LocationConfig &location);
-    void parse_location_autoindex(LocationConfig &location);
-    void parse_location_upload(LocationConfig &location);
-    void parse_location_upload_path(LocationConfig &location);
-    void parse_location_cgi(LocationConfig &location);
-
-
-//  check file and path 
-    void validate_directory(const std::string &path, const std::string &name, int permissions) const;
-    void validate_executable(const std::string &path, const std::string &name) const;
-};
-
-#endif
-
-========================================
 FILE: hpp/Router.hpp
 ========================================
 
@@ -367,98 +290,6 @@ public:
 
 #endif
 
-
-========================================
-FILE: hpp/ServerConfig.hpp
-========================================
-
-#ifndef SERVER_CONFIG_HPP
-#define SERVER_CONFIG_HPP
-
-#include <string>
-#include <vector>
-#include <map>
-#include <cstddef>
-
-struct CgiConfig
-{
-    std::string extension;
-    std::string interpreter;
-};
-
-struct ListenConfig
-{
-    std::string ip;
-    int port;
-
-    ListenConfig() : port(0)
-    {
-    }
-};
-
-struct LocationConfig
-{
-    std::string path;
-    std::string root;
-    std::string index;
-    std::vector<std::string> allowed_methods;
-
-    int return_code;
-    std::string return_url;
-
-    bool autoindex;
-
-    bool upload_enabled;
-    std::string upload_path;
-
-    std::vector<CgiConfig> cgi;
-
-    LocationConfig()
-        : path("/"),
-          root(""),
-          index(""),
-          return_code(0),
-          autoindex(false),
-          upload_enabled(false)
-    {
-    }
-};
-
-struct ServerConfig
-{
-    std::string ip;
-    int port;
-    std::string server_name;
-
-
-
-
-
-    
-    std::vector<ListenConfig> listens;
-    
-    std::string root;
-    std::string index;
-    
-    std::size_t client_max_body_size;
-    std::map<int, std::string> error_pages;
-    
-    std::vector<LocationConfig> locations;
-    int return_code; 
-
-    ServerConfig()
-        : ip(""),
-          port(0),
-          server_name(""),
-          root(""),
-          index("index.html"),
-          client_max_body_size(1024 * 1024),
-          return_code(0)
-    {
-    }
-};
-
-#endif
 
 ========================================
 FILE: hpp/Server.hpp
@@ -563,7 +394,7 @@ private:
     const ServerConfig *find_server_config(const std::string &host) const;
 
     // CGI
-    bool start_cgi(ClientConnection &client,const HttpRequest &request,const std::string &script_path,const std::string &interpreter_path,std::string &error_status);
+    bool start_cgi(ClientConnection &client,const HttpRequest &request,const std::string &script_path,const std::string &interpreter_path,const std::string &path_info,std::string &error_status);
     void process_cgi_events(const std::vector<struct pollfd> &fds,std::vector<ClientConnection> &clients,std::size_t polled_client_count,std::size_t polled_cgi_count);
     void remove_cgi_for_client(int client_fd);
     const CgiConfig *find_cgi_config(const std::string &uri, const LocationConfig *location) const;
@@ -581,8 +412,7 @@ public:
     bool handle_client_event(ClientConnection &client, HttpParser &parser);
 
     bool get_content_length(const std::string &headers_part, std::size_t &content_length) const;    
-    bool check_max_body_size(ClientConnection &client, std::size_t content_length, const ServerConfig &conf);
-    void parse_and_respond(ClientConnection &client, HttpParser &http_parser, const ServerConfig &conf);
+    bool check_max_body_size(ClientConnection &client,std::size_t content_length,std::size_t max_body_size);    void parse_and_respond(ClientConnection &client, HttpParser &http_parser, const ServerConfig &conf);
     bool read_client_data(ClientConnection &client, bool &stop_processing);
     const ServerConfig &get_server_config(const ClientConnection &client) const;
 
@@ -610,6 +440,107 @@ public:
     bool is_chunked(const std::string &headers_part) const;
 
     void handle_large_header(ClientConnection &client);
+
+    std::size_t get_request_body_limit(const std::string &headers_part,const ServerConfig &conf) const;
+
+};
+
+#endif
+
+========================================
+FILE: hpp/ServerConfig.hpp
+========================================
+
+#ifndef SERVER_CONFIG_HPP
+#define SERVER_CONFIG_HPP
+
+#include <string>
+#include <vector>
+#include <map>
+#include <cstddef>
+
+struct CgiConfig
+{
+    std::string extension;
+    std::string interpreter;
+};
+
+struct ListenConfig
+{
+    std::string ip;
+    int port;
+
+
+    ListenConfig() : port(0)
+    {
+    }
+};
+
+struct LocationConfig
+{
+    std::string path;
+    std::string root;
+    std::string index;
+    std::vector<std::string> allowed_methods;
+
+    int return_code;
+    std::string return_url;
+
+    bool autoindex;
+
+    bool upload_enabled;
+    std::string upload_path;
+
+    std::size_t client_max_body_size;
+    bool client_max_body_size_defined;
+
+    std::vector<CgiConfig> cgi;
+
+    LocationConfig()
+        : path("/"),
+          root(""),
+          index(""),
+          return_code(0),
+          autoindex(false),
+          upload_enabled(false),
+        client_max_body_size(0),
+        client_max_body_size_defined(false)
+    {
+    }
+};
+
+struct ServerConfig
+{
+    std::string ip;
+    int port;
+    std::string server_name;
+
+
+
+
+
+    
+    std::vector<ListenConfig> listens;
+    
+    std::string root;
+    std::string index;
+    
+    std::size_t client_max_body_size;
+    std::map<int, std::string> error_pages;
+    
+    std::vector<LocationConfig> locations;
+    int return_code; 
+
+    ServerConfig()
+        : ip(""),
+          port(0),
+          server_name(""),
+          root(""),
+          index("index.html"),
+          client_max_body_size(1024 * 1024),
+          return_code(0)
+    {
+    }
 };
 
 #endif
@@ -778,6 +709,87 @@ namespace Upload
 #endif
 
 ========================================
+FILE: hpp/parser.hpp
+========================================
+
+#ifndef PARSER_HPP
+#define PARSER_HPP
+
+#include <vector>
+#include <stdexcept>
+#include <cstdlib>
+#include <string>
+#include <unistd.h>
+#include <stdexcept>
+#include <sys/stat.h>
+#include <limits>
+#include "ServerConfig.hpp"
+#include "Tokenizer.hpp"
+
+
+class Parser
+{
+private:
+    std::vector<Token> _tokens;
+    size_t _index;
+
+public:
+    Parser();
+    Parser(const std::vector<Token>& _tokens);
+    Parser(const Parser &ot);
+    Parser& operator=(const Parser &ot);
+
+    ~Parser();
+    
+    void print_tokens( void );
+    void set_token(const std::vector<Token>& _tokens);
+
+    std::vector<ServerConfig> start_parse(void);
+    
+    void parse_server(ServerConfig &conf);
+    void parse_listen(ServerConfig &conf, bool &listen_defined);
+    void parse_root(ServerConfig &conf, bool &root_defined);
+    void parse_index(ServerConfig &conf, bool &index_defined);
+    void parse_server_name(ServerConfig &conf, bool &server_name_defined);
+    void parse_error_page(ServerConfig &conf);
+
+    void parse_client_max_body_size(ServerConfig &conf, bool &defined);
+    void bit_size(const std::string &suffix, std::size_t &multiplier);
+    void get_number_multiplayer( const std::string &number_part, std::size_t &number);
+
+    void warn_duplicate_listen_without_server_name(const std::vector<ServerConfig> &servers) const;
+
+    
+
+// listen
+    bool is_valid_ipv4(const std::string &ip);
+    bool is_valid_port(const std::string &port);
+
+// Location
+    void parse_location(ServerConfig &conf);
+    void parse_location_directives(LocationConfig &location);
+    void parse_location_root(LocationConfig &location);
+    void parse_location_index(LocationConfig &location);
+    void check_location(const ServerConfig &conf) const;
+    void validate_root(const ServerConfig &conf) const;
+    void parse_location_allowed_methods(LocationConfig &location);
+    void parse_location_return(LocationConfig &location);
+    void parse_location_autoindex(LocationConfig &location);
+    void parse_location_upload(LocationConfig &location);
+    void parse_location_upload_path(LocationConfig &location);
+    void parse_location_cgi(LocationConfig &location);
+
+    void parse_location_client_max_body_size(LocationConfig &location);
+
+
+//  check file and path 
+    void validate_directory(const std::string &path, const std::string &name, int permissions) const;
+    void validate_executable(const std::string &path, const std::string &name) const;
+};
+
+#endif
+
+========================================
 FILE: hpp/webserv.hpp
 ========================================
 
@@ -868,6 +880,32 @@ namespace
         return fcntl(fd, F_SETFD, flags | FD_CLOEXEC) != -1;
     }
 
+    bool make_absolute_path(const std::string &path,std::string &absolute_path)
+    {
+        if (path.empty())
+            return false;
+
+        if (path[0] == '/')
+        {
+            absolute_path = path;
+            return true;
+        }
+
+        char cwd[PATH_MAX];
+
+        if (getcwd(cwd, sizeof(cwd)) == NULL)
+            return false;
+
+        absolute_path = cwd;
+
+        if (absolute_path[absolute_path.size() - 1] != '/')
+            absolute_path += '/';
+
+        absolute_path += path;
+
+        return true;
+    }
+
     std::string number_to_string(std::size_t number)
     {
         std::ostringstream ss;
@@ -937,11 +975,12 @@ CgiHandler::CgiHandler(
     int client_fd,
     const HttpRequest &request,
     const std::string &script_path,
-    const std::string &interpreter_path)
+    const std::string &interpreter_path,
+    const std::string &path_info)
     : _request(request),
       _script_path(script_path),
       _interpreter_path(interpreter_path),
-      _path_info(""),
+      _path_info(path_info),
       _input_buffer(request.body),
       _output_buffer(""),
       _input_offset(0),
@@ -1003,6 +1042,19 @@ bool CgiHandler::start(std::string &error_status)
         _script_path.find('\0') != std::string::npos ||
         _interpreter_path.find('\0') != std::string::npos)
         return false;
+    std::string interpreter_path;
+
+    if (!make_absolute_path(_interpreter_path, interpreter_path))
+    {
+        error_status = "500 Internal Server Error";
+        return false;
+    }
+
+    if (access(interpreter_path.c_str(), X_OK) == -1)
+    {
+        error_status = "500 Internal Server Error";
+        return false;
+    }
 
     struct stat info;
 
@@ -1042,8 +1094,7 @@ bool CgiHandler::start(std::string &error_status)
     if (script_name.empty())
         return false;
 
-    std::vector<std::string> env =
-        build_environment(_request, _script_path, _path_info);
+    std::vector<std::string> env = build_environment(_request, _script_path, _path_info);
 
     std::vector<char *> envp;
 
@@ -1054,7 +1105,7 @@ bool CgiHandler::start(std::string &error_status)
 
     char *argv[3];
 
-    argv[0] = const_cast<char *>(_interpreter_path.c_str());
+    argv[0] = const_cast<char *>(interpreter_path.c_str());
     argv[1] = const_cast<char *>(script_name.c_str());
     argv[2] = NULL;
 
@@ -1122,7 +1173,7 @@ bool CgiHandler::start(std::string &error_status)
         if (chdir(script_dir.c_str()) == -1)
             _exit(127);
 
-        execve(_interpreter_path.c_str(), argv, &envp[0]);
+        execve(interpreter_path.c_str(), argv, &envp[0]);
 
         _exit(127);
     }
@@ -2005,894 +2056,6 @@ HttpResponse HttpResponse::from_status_line(const std::string &status_line, cons
 
 
 ========================================
-FILE: src/main.cpp
-========================================
-
-#include "../hpp/webserv.hpp"
-#include "../hpp/Server.hpp"
-#include "../hpp/HttpRequest.hpp"
-
-
-
-
-
-void print_conf(const std::vector<ServerConfig> &configs)
-{
-    for (std::size_t i = 0; i < configs.size(); ++i)
-    {
-        std::cout << "\n===== SERVER " << i + 1 << " =====\n";
-    
-        for (std::map<int, std::string>::const_iterator it =
-                configs[i].error_pages.begin();
-             it != configs[i].error_pages.end(); ++it)
-        {
-            std::cout << "Error code: " << it->first
-                      << " | Page: " << it->second << std::endl;
-        }
-    }
-    for (std::size_t i = 0; i < configs.size(); ++i)
-    {
-        std::cout << "\n===== SERVER " << i + 1 << " =====" << std::endl;
-    
-        for (std::size_t j = 0; j < configs[i].locations.size(); ++j)
-        {
-            const LocationConfig &loc = configs[i].locations[j];
-        
-            std::cout << "Location: " << loc.path << std::endl;
-            std::cout << "Return code: " << loc.return_code << std::endl;
-            std::cout << "Return URL: " << loc.return_url << std::endl;
-            std::cout << "Root: " << loc.root << std::endl;
-            std::cout << "Index: " << loc.index << std::endl;
-            std::cout << "autoindex: " << loc.autoindex << std::endl;
-            std::cout << "uppload: " << loc.upload_enabled << std::endl;
-            std::cout << "upload_path: " << loc.upload_path << std::endl;
-            std::cout << "Max body size: " << configs[i].client_max_body_size << " bytes" << std::endl;
-            std::cout << "CGI count: " << loc.cgi.size() << std::endl;
-            for (std::size_t k = 0; k < loc.cgi.size(); ++k)
-            {
-                std::cout << "CGI extension: "
-                          << loc.cgi[k].extension << std::endl;
-            
-                std::cout << "CGI interpreter: "
-                          << loc.cgi[k].interpreter << std::endl;
-            }
-        }
-        for (std::size_t i = 0; i < configs.size(); ++i)
-        {
-            std::cout << "\nServer " << i + 1 << std::endl;
-            std::cout << "IP: " << configs[i].ip << std::endl;
-            std::cout << "Port: " << configs[i].port << std::endl;
-            std::cout << "Root: " << configs[i].root << std::endl;
-            std::cout << "Index: " << configs[i].index << std::endl;
-        }
-    }
-
-}
-
-int init_webserv(std::string &path)
-{
-    webserv web(path);
-    Tokenizer Tok;
-    Parser pars;
-    HttpParser Http_parser;
-    std::vector<ServerConfig> configs;
-
-
-    // pars.print_tokens();
-    
-    try
-    {
-        web.take_path();
-        if (!Tok.open_file_empty_and_valid(web.get_path()))
-            throw std::runtime_error("Invalid configuration file");
-
-        Tok.create_tokens();
-        pars.set_token(Tok.get_token());
-
-        configs =  pars.start_parse();
-            
-        for (std::size_t i = 0; i < configs.size(); ++i)
-            pars.validate_root(configs[i]);
-        print_conf(configs);
-        Server serv(configs);
-        serv.create_socket();
-        std::cout << "Socket created successfully" << std::endl;
-        
-
-        serv.bind_socket();
-        serv.listen_socket();
-        serv.run(Http_parser);  
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Config error: " << e.what() << std::endl;
-        return  1;
-    }
-    return (0);
-}
-   
-
-int main(int argc, char *argv[])
-{
-    std::string path;
-
-    path = "";
-    if(argc == 2)
-        path = argv[1];
-    if(argc > 2)
-    {
-        std::cout << "Error wrong argument" << std::endl;  
-        return 1;
-    }
-    return (init_webserv(path));
-}
-
-
-
-========================================
-FILE: src/parser.cpp
-========================================
-
-#include "parser.hpp"
-
-Parser::Parser() : _index(0)
-{
-}
-Parser::Parser(const std::vector<Token> &tokens) : _tokens(tokens), _index(0)
-{
-}
-
-void Parser::set_token(const std::vector<Token> &tokens)
-{
-    _tokens = tokens;
-    _index = 0;
-}
-
-Parser::Parser(const Parser &other) : _tokens(other._tokens), _index(other._index)
-{
-}
-
-Parser &Parser::operator=(const Parser &other)
-{
-    if (this != &other)
-    {
-        _tokens = other._tokens;
-        _index = other._index;
-    }
-    return *this;
-}
-
-
-void Parser::print_tokens(void)
-{
-    std::cout << "------ in parse -> \n \n" ;
-    for (size_t i = 0; i < this->_tokens.size(); ++i)
-    {
-        std::cout << "Index: " << i 
-                  << " | Type: " << this->_tokens[i].type
-                  << " | Value: [ " << this->_tokens[i].value << " ]" 
-                  << std::endl;
-    }
-}
-
-
-void Parser::warn_duplicate_listen_without_server_name(const std::vector<ServerConfig> &servers) const
-{
-    for (std::size_t i = 0; i < servers.size(); ++i)
-    {
-        for (std::size_t j = i + 1; j < servers.size(); ++j)
-        {
-            bool same_listen = false;
-            std::string shared_ip;
-            int shared_port = 0;
-
-            for (std::size_t a = 0; a < servers[i].listens.size() && !same_listen; ++a)
-            {
-                for (std::size_t b = 0; b < servers[j].listens.size(); ++b)
-                {
-                    if (servers[i].listens[a].ip == servers[j].listens[b].ip && servers[i].listens[a].port == servers[j].listens[b].port)
-                    {
-                        same_listen = true;
-                        shared_ip = servers[i].listens[a].ip;
-                        shared_port = servers[i].listens[a].port;
-                        break;
-                    }
-                }
-            }
-            if (same_listen && servers[i].server_name.empty() && servers[j].server_name.empty())
-            {
-                std::cerr << "WARNING: server blocks "
-                << i + 1 << " and " << j + 1 << " use the same listen address "
-                << shared_ip << ":" << shared_port << " without server_name."
-                << std::endl;
-            }
-            else if (same_listen && !servers[i].server_name.empty() && servers[i].server_name == servers[j].server_name)
-            {
-                std::cerr << "WARNING: duplicate server_name '"
-                << servers[i].server_name << "' in server blocks "
-                << i + 1 << " and " << j + 1 << " on "
-                << shared_ip << ":" << shared_port << "."
-                << std::endl;
-            }
-        }
-    }
-}
-
-
-
-
-void Parser::parse_root(ServerConfig &conf, bool &root_defined)
-{
-    if (root_defined)
-        throw std::runtime_error("Duplicate 'root' directive");
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected path after 'root'");
-
-    std::string path = _tokens[_index].value;
-    if (path.empty())
-        throw std::runtime_error("Root path cannot be empty");
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';' after 'root'");
-    conf.root = path;
-    ++_index;
-    root_defined = true;
-}
-void Parser::parse_index( ServerConfig &conf, bool &index_defined)
-{
-    if (index_defined)
-        throw std::runtime_error("Duplicate 'index' directive");
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected filename after 'index'");
-    conf.index = _tokens[_index].value;
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';' after 'index'");
-    ++_index;
-    index_defined = true;
-}
-
-
-bool Parser::is_valid_ipv4(const std::string& ip)
-{
-    int parts = 0;
-    std::string::size_type start = 0;
-
-    while(true)
-    {
-        std::string::size_type dot = ip.find('.', start);
-        std::string part;
-        int number = 0;
-
-        if(dot == std::string::npos)
-            part = ip.substr(start);
-        else
-            part = ip.substr(start, dot - start);
-
-        if (part.empty() || part.size() > 3)
-            return false;
-        for (std::string::size_type i = 0; i < part.size(); ++i)
-        {
-            if (part[i] < '0' || part[i] > '9')
-                return false;
-            number = number * 10 + (part[i] - '0');
-        }
-        if (number > 255)
-            return false;
-        ++parts;
-        if (dot == std::string::npos)
-            break;
-        start = dot + 1;
-    }
-    return parts == 4;
-}
-
-
-bool Parser::is_valid_port(const std::string& port)
-{
-    int number = 0;
-
-    if (port.empty() || port.size() > 5)
-        return false;
-    for (std::string::size_type i = 0; i < port.size(); ++i)
-    {
-        if (port[i] < '0' || port[i] > '9')
-            return false;
-
-        number = number * 10 + (port[i] - '0');
-    }
-    if (number < 1 || number > 65535)
-        return false;
-    return true;
-}
-
-void Parser::parse_listen(ServerConfig &conf, bool &listen_defined)
-{
-    ++_index;
-
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected address after 'listen'");
-
-    std::string address = _tokens[_index].value;
-    std::string::size_type colon = address.find(':');
-    if (colon == std::string::npos || address.find(':', colon + 1) != std::string::npos)
-        throw std::runtime_error("Invalid listen address: expected IPv4:port");
-    std::string ip = address.substr(0, colon);
-    std::string port = address.substr(colon + 1);
-
-    if (!is_valid_ipv4(ip))
-        throw std::runtime_error("Invalid IPv4 address");
-
-    if (!is_valid_port(port))
-        throw std::runtime_error("Invalid port");
-
-    ListenConfig listen;
-    listen.ip = ip;
-    listen.port = std::atoi(port.c_str());
-
-    for (std::size_t i = 0; i < conf.listens.size(); ++i)
-    {
-        if (conf.listens[i].ip == listen.ip && conf.listens[i].port == listen.port)
-            throw std::runtime_error("Duplicate listen address");
-    }
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';' after 'listen'");
-    ++_index;
-    listen_defined = true;
-    conf.listens.push_back(listen);
-    if (conf.listens.size() == 1)
-    {
-        conf.ip = listen.ip;
-        conf.port = listen.port;
-    }
-    std::cout << "Listen IP: " << ip << std::endl;
-    std::cout << "Listen port: " << port << std::endl;
-}
-
-
-void Parser::check_location(const ServerConfig &conf) const
-{
-    for(size_t i = 0; i < conf.locations.size(); ++i)
-    {
-        const LocationConfig &location = conf.locations[i];
-
-        if (location.root.empty() && location.return_code == 0)
-            throw std::runtime_error("Missing root for location: " + location.path);
-
-
-        if (!location.root.empty())
-            validate_directory(location.root, "location root", R_OK | X_OK);
-        // Check upload directory
-        if (location.upload_enabled)
-            validate_directory(location.upload_path, "upload path",W_OK | X_OK);
-        for (std::size_t j = 0; j < location.cgi.size(); ++j)
-        {
-            validate_executable(location.cgi[j].interpreter, "CGI interpreter");
-        }
-    }
-}
-
-
-
-void Parser::validate_directory(const std::string &path, const std::string &name, int permissions) const
-{
-    struct stat info;
-
-    if (path.empty())
-        throw std::runtime_error(name + " path is empty");
-    if (stat(path.c_str(), &info) != 0)
-        throw std::runtime_error(
-            "Cannot access " + name + ": " + path);
-
-    if (!S_ISDIR(info.st_mode))
-        throw std::runtime_error(
-            name + " is not a directory: " + path);
-
-    if (access(path.c_str(), permissions) != 0)
-        throw std::runtime_error(
-            "Insufficient permissions for " + name + ": " + path);
-}
-
-void Parser::validate_executable(const std::string &path, const std::string &name) const
-{
-    struct stat info;
-
-    if (path.empty())
-        throw std::runtime_error(name + " path is empty");
-    if (stat(path.c_str(), &info) != 0)
-        throw std::runtime_error("Cannot access " + name + ": " + path);
-
-    if (!S_ISREG(info.st_mode))
-        throw std::runtime_error(name + " is not a regular file: " + path);
-
-    if (access(path.c_str(), X_OK) != 0)
-        throw std::runtime_error(name + " is not executable: " + path);
-}
-
-void Parser::validate_root(const ServerConfig &conf) const
-{
-
-    if (!conf.root.empty())
-        validate_directory(conf.root, "server root", R_OK | X_OK);
-    check_location(conf);
-}
-
-
-void Parser::parse_location_root(LocationConfig &location)
-{
-    if (_index >= _tokens.size() ||
-        _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected path after 'root' in location");
-    location.root = _tokens[_index].value;
-    ++_index;
-    if (_index >= _tokens.size() ||
-        _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';' after location root");
-    ++_index;
-}
-   
-void Parser::parse_location_index(LocationConfig &location)
-{
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected filename after 'index' in location");
-    location.index = _tokens[_index].value;
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';' after location index");
-    ++_index;
-}
-
-
-void Parser::parse_location_allowed_methods(LocationConfig &location)
-{
-    bool methood_found = false;
-    std::string  method;
-    while(_index < _tokens.size() && _tokens[_index].type != TOKEN_SEMICOLON)
-    {
-        if(_tokens[_index].type != TOKEN_ARGUMENT)
-            throw std::runtime_error("Expected HTTP method");
-        
-        method = _tokens[_index].value;
-        if(method != "GET" && method != "POST" && method != "DELETE")
-            throw std::runtime_error("Invalid method HTTP");
-
-        for(std::size_t i = 0; i < location.allowed_methods.size(); ++i)
-        {
-            if(location.allowed_methods[i] == method)
-                throw std::runtime_error("Duplicate HTTP method" + method);
-        }
-        location.allowed_methods.push_back(method);
-        methood_found = true;
-        ++_index;
-    }
-    if(!methood_found)
-        throw std::runtime_error("AT least one HTTP methood is required");
-    if(_index >= _tokens.size()  || _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';' after allowed_methods");
-    ++_index;
-}
-
-void Parser::parse_location_return(LocationConfig &location)
-{
-    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected return status code ");
-
-    const std::string code = _tokens[_index].value;
-    
-    if(code != "301" && code != "302" && code != "303" && code != "307" && code != "308")
-        throw std::runtime_error("Only return 301,302 303, 307, 308 is supported -> " + code);
-    
-    location.return_code = std::atoi(code.c_str());
-    ++_index;
-    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected return URL");
-    
-    location.return_url = _tokens[_index].value;
-    ++_index;
-    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';'  after return");
-    ++_index;
-
-    std::cout << "return code -> " << location.return_code << "\n";
-    std::cout << "return URL -> " << location.return_url  << "\n";
-}
-
-
-void Parser::parse_location_upload(LocationConfig &location)
-{
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected 'on' or 'off' after upload");
-    
-    const std::string value = _tokens[_index].value;
-
-    if (value == "on")
-        location.upload_enabled = true;
-    else if (value == "off")
-        location.upload_enabled = false;
-    else
-        throw std::runtime_error("Invalid upload value: " + value);
-
-    ++_index;
-
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';' after upload");
-
-    ++_index;
-
-}
-
-void Parser::parse_location_upload_path(LocationConfig &location)
-{
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected path after 'upload_path'");
-
-    const std::string path = _tokens[_index].value;
-    if (path.empty())
-        throw std::runtime_error("Upload path cannot be empty");
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';' after upload_path");
-    ++_index;
-    location.upload_path = path;
-}
-
-
-void Parser::parse_location_cgi(LocationConfig &location)
-{
-
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected CGI extension");
-    const std::string ext = _tokens[_index].value;
-    if (ext.size() < 2 || ext[0] != '.' || ext.find('/') != std::string::npos || ext.find('\\') != std::string::npos)
-        throw std::runtime_error("Invalid CGI extension");
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected CGI interpreter");
-    const std::string interpreter = _tokens[_index].value;
-    if (interpreter.empty())
-        throw std::runtime_error("CGI interpreter cannot be empty");
-    for (std::size_t i = 0; i < location.cgi.size(); ++i)
-    {
-        if (location.cgi[i].extension == ext)
-            throw std::runtime_error("Duplicate CGI extension: " + ext);
-    }
-    ++_index;
-
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';' after cgi");
-    ++_index;
-    CgiConfig config;
-    config.extension = ext;
-    config.interpreter = interpreter;
-
-    location.cgi.push_back(config);
-}
-
-void Parser::parse_location_directives(LocationConfig &location)
-{
-    bool root_defined = false;
-    bool index_defined = false;
-    bool methods_defined = false;
-    bool return_defined = false;
-    bool autoindex_defined = false;
-    bool upload_defined = false;
-    bool upload_path_defined = false;
-    while (_index < _tokens.size() && _tokens[_index].type != TOKEN_RBRACE)
-    {
-        if (_tokens[_index].type == TOKEN_ROOT)
-        {
-            if (root_defined)
-                throw std::runtime_error("Duplicate 'root' directive in location");
-            ++_index;
-            parse_location_root(location);
-            root_defined = true;
-        }
-        else if (_tokens[_index].type == TOKEN_INDEX)
-        {
-            if (index_defined)
-                throw std::runtime_error("Duplicate 'index' directive in location");
-            ++_index;
-            parse_location_index(location);
-            index_defined = true; 
-        }
-        else if (_tokens[_index].type == TOKEN_ALLOWED_METHODS)
-        {
-            if(methods_defined)
-                throw std::runtime_error("Duplicate 'allowed_methods' ");
-            ++_index;
-            parse_location_allowed_methods(location);
-            methods_defined = true;
-        }
-        else if(_tokens[_index].type == TOKEN_RETURN)
-        {
-            if(return_defined)
-                throw std::runtime_error("Duplicate 'return' directives in location");
-            ++_index;
-            parse_location_return(location);
-            return_defined = true;
-        }
-        else if (_tokens[_index].type == TOKEN_AUTOINDEX)
-        {
-            if (autoindex_defined)
-                throw std::runtime_error("Duplicate 'autoindex' directive");
-        
-            ++_index;
-            parse_location_autoindex(location);
-            autoindex_defined = true;
-        }
-        else if (_tokens[_index].type == TOKEN_UPLOAD)
-        {
-            if (upload_defined)
-                throw std::runtime_error("Duplicate 'upload' directive");
-            ++_index;
-            parse_location_upload(location);
-            upload_defined = true;
-        }
-        else if(_tokens[_index].type == TOKEN_UPLOAD_PATH)
-        {
-            if (upload_path_defined)
-                throw std::runtime_error("Duplicate 'upload_path' directive");
-                
-            ++_index;
-            parse_location_upload_path(location);
-            upload_path_defined = true;
-        }
-        else if (_tokens[_index].type == TOKEN_CGI)
-        {
-            ++_index;
-            parse_location_cgi(location);
-        }
-        
-        else
-            throw std::runtime_error("Unknown directive inside location: '" + _tokens[_index].value + "'");
-    }
-    if (location.upload_enabled && location.upload_path.empty())
-        throw std::runtime_error("'upload on' requires 'upload_path'");
-}
-
-
-void Parser::parse_location(ServerConfig &conf)
-{
-    LocationConfig location;
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected path after 'location'");
-    location.path = _tokens[_index].value;
-    if (location.path.empty() || location.path[0] != '/')
-        throw std::runtime_error("Location path must start with '/'");
-    for (std::size_t i = 0; i < conf.locations.size(); ++i)
-    {
-        if (conf.locations[i].path == location.path)
-            throw std::runtime_error(
-                "Duplicate location: " + location.path);
-    }
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_LBRACE)
-        throw std::runtime_error("Expected '{' after location path");
-    ++_index;
-    parse_location_directives(location);
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_RBRACE)
-        throw std::runtime_error("Unexpected end of file: expected '}' after location");
-    ++_index;
-    conf.locations.push_back(location);
-}
-
-void Parser::parse_server_name(ServerConfig &conf, bool &server_name_defined)
-{
-    if(server_name_defined)
-        throw std::runtime_error("Duplicate 'server_name' directive");
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected hostname after 'server_name'");
-    conf.server_name = _tokens[_index].value;
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';' after 'server_name'");
-    ++_index;
-    server_name_defined = true;
-
-}
-
-void Parser::parse_error_page(ServerConfig &conf)
-{
-    ++_index;
-
-    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected HTTP error code after 'error_page'");
-    const std::string code = _tokens[_index].value;
-
-    if(code.size() != 3 || code[0] < '0' || code[0] > '9' || code[1] > '9' || code[1] < '0' || code[2] < '0' || code[2] > '9')
-        throw std::runtime_error("Invalid HTTP error code");
-
-    int status_code = std::atoi(code.c_str());
-
-    if(status_code < 400 || status_code > 599)
-        throw std::runtime_error("HTTP error code must be between 400 and 599");
-    if(conf.error_pages.find(status_code) != conf.error_pages.end())
-        throw std::runtime_error("Duplicate error_page status code");
-    ++_index;
-    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected HTTP error page URL");
-
-    const std::string path = _tokens[_index].value;
-
-    if(path.empty() || path[0] != '/')
-        throw std::runtime_error("Error page URI must start with '/'");
-    ++_index;
-
-    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';' after error_page");
-    ++_index;
-    conf.error_pages[status_code] = path;
-}
-
-
-void Parser::bit_size(const std::string &suffix, std::size_t & multiplier)
-{ 
-    if (suffix.empty())
-    multiplier = 1;
-    else if (suffix == "K" || suffix == "k")
-        multiplier = 1024;
-    else if (suffix == "M" || suffix == "m")
-        multiplier = 1024 * 1024;
-    else if (suffix == "G" || suffix == "g")
-        multiplier = 1024 * 1024 * 1024;
-    else
-        throw std::runtime_error("Invalid size suffix");
-}
-
-void Parser::get_number_multiplayer( const std::string &number_part, std::size_t &number)
-{
-    const std::size_t max_size = std::numeric_limits<std::size_t>::max();
-
-    for (std::string::size_type i = 0; i < number_part.size(); ++i)
-    {
-        int digit = number_part[i] - '0';
-
-        if (number > (max_size - digit) / 10)
-            throw std::runtime_error("client_max_body_size overflow");
-
-        number = number * 10 + digit;
-    }
-}
-
-void Parser::parse_client_max_body_size(ServerConfig &conf, bool &defined)
-{
-    if (defined)
-        throw std::runtime_error("Duplicate 'client_max_body_size' directive");
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected size after 'client_max_body_size'");
-
-    const std::string value = _tokens[_index].value;
-    std::string::size_type pos = 0;
-
-    while(pos < value.size() && value[pos] >= '0'&& value[pos] <= '9')
-        ++pos;
-    if(pos == 0)
-        throw std::runtime_error("Invalid client_max_body_size value");
-    std::string number_part = value.substr(0, pos);
-    std::string suffix = value.substr(pos);
-    std::size_t multiplier = 1;
-    std::size_t number = 0;
-    bit_size(suffix, multiplier);
-
-    get_number_multiplayer(number_part, number);
-
-    if (number > std::numeric_limits<std::size_t>::max() / multiplier)
-        throw std::runtime_error("client_max_body_size overflow");
-
-    std::size_t size = number * multiplier;
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';' after client_max_body_size");
-    ++_index;
-
-    conf.client_max_body_size = size;
-    defined = true;
-}
-
-
-void Parser::parse_location_autoindex(LocationConfig &location)
-{
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
-        throw std::runtime_error("Expected 'on' or 'off' after autoindex");
-    
-    const std::string value = _tokens[_index].value;
-
-    if(value == "on")
-        location.autoindex = true;
-    else if (value == "off")
-        location.autoindex = false;
-    else
-        throw std::runtime_error("Invalid autoindex value: " + value);
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
-        throw std::runtime_error("Expected ';' after autoindex");
-    ++_index;
-}
-
-void Parser::parse_server(ServerConfig &conf)
-{
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SERVER)
-        throw std::runtime_error("Expected 'server'");
-    ++_index;
-    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_LBRACE)
-        throw std::runtime_error("Expected '{' after 'server'");
-    ++_index;
-    bool listen_defined = false;
-    bool server_name_defined = false;
-    bool root_defined = false;
-    bool index_defined = false;
-    bool client_max_body_size_defined = false;
-    while (_index < _tokens.size() &&  _tokens[_index].type != TOKEN_RBRACE)
-    {
-        if (_tokens[_index].type == TOKEN_LISTEN)
-            parse_listen(conf, listen_defined);
-        else if (_tokens[_index].type == TOKEN_SERVER_NAME)
-            parse_server_name(conf, server_name_defined);
-        else if (_tokens[_index].type == TOKEN_ROOT)
-            parse_root(conf, root_defined);
-        else if (_tokens[_index].type == TOKEN_INDEX)
-            parse_index(conf, index_defined);
-        else if (_tokens[_index].type == TOKEN_LOCATION)
-            parse_location(conf);
-        else if(_tokens[_index].type == TOKEN_ERROR_PAGE)
-            parse_error_page(conf);
-        else if (_tokens[_index].type == TOKEN_CLIENT_MAX_BODY_SIZE)
-            parse_client_max_body_size(conf, client_max_body_size_defined);
-        else
-            throw std::runtime_error("Unknown directive inside server");
-    }
-    if (_index >= _tokens.size())
-        throw std::runtime_error("Unexpected end of file: expected '}'");
-
-    ++_index;
-    if (!listen_defined)
-        throw std::runtime_error("Missing required directive: listen");
-    if (!root_defined)
-        throw std::runtime_error("Missing required directive: root");
-    for (std::size_t i = 0; i < conf.locations.size(); ++i)
-    {
-        if (conf.locations[i].root.empty())
-            conf.locations[i].root = conf.root;
-    }
-}
-
-
-std::vector<ServerConfig> Parser::start_parse()
-{
-    _index = 0;
-    std::vector<ServerConfig> servers;
-    if (_tokens.empty())
-        throw std::runtime_error("Config file is empty");
-
-
-    while (_index < _tokens.size())
-    {
-        if (_tokens[_index].type != TOKEN_SERVER)
-            throw std::runtime_error(
-                "Expected 'server' at the beginning of server block"
-            );
-
-        ServerConfig conf;
-        parse_server(conf);
-
-        servers.push_back(conf);
-    }
-    warn_duplicate_listen_without_server_name(servers);
-    return servers;
-}
-
-Parser::~Parser()
-{
-
-}
-
-========================================
 FILE: src/Router.cpp
 ========================================
 
@@ -3091,9 +2254,39 @@ std::string Router::get_index(const LocationConfig *location) const
 
 // The part of the URI that matched the location is replaced by the root, so
 // "location /kapouet { root /tmp/www; }" maps /kapouet/a/b to /tmp/www/a/b.
-std::string Router::build_path(const std::string &uri,const LocationConfig *location) const
+std::string Router::build_path(const std::string &uri, const LocationConfig *location) const
 {
-    return join_path(get_root(location), uri);
+    std::string relative = uri;
+
+    if (location != NULL)
+    {
+        const std::string &prefix = location->path;
+
+        if (prefix == "/")
+        {
+            if (!relative.empty() && relative[0] == '/')
+            {
+                relative.erase(0, 1);
+            }
+        }
+        else if (prefix[prefix.size() - 1] == '/')
+        {
+            if (uri == prefix.substr(0, prefix.size() - 1))
+            {
+                relative.clear();
+            }
+            else if (uri.compare(0, prefix.size(), prefix) == 0)
+            {
+                relative = uri.substr(prefix.size());
+            }
+        }
+        else if (uri.compare(0, prefix.size(), prefix) == 0)
+        {
+            relative = uri.substr(prefix.size());
+        }
+    }
+
+    return join_path(get_root(location), relative);
 }
 
 bool Router::is_method_allowed(const LocationConfig *location, const std::string &method) const
@@ -3312,13 +2505,14 @@ const CgiConfig *Server::find_cgi_config(const std::string &uri,const LocationCo
     return NULL;
 }
 
-bool Server::start_cgi(ClientConnection &client,const HttpRequest &request,const std::string &script_path,const std::string &interpreter_path,std::string &error_status)
+bool Server::start_cgi(ClientConnection &client,const HttpRequest &request,const std::string &script_path,const std::string &interpreter_path,const std::string &path_info,std::string &error_status)
 {
     CgiHandler *cgi = new CgiHandler(
         client.fd,
         request,
         script_path,
-        interpreter_path
+        interpreter_path,
+        path_info
     );
 
     if (!cgi->start(error_status))
@@ -3479,24 +2673,23 @@ request.headers["content-type"]; // Multipart Content-Type
     location->return_url;      // Optional redirect for POST
 */
 
+
 void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, std::string &status, std::string &body)
 {
-    // Find the location matching the request URI.
     const LocationConfig *location = find_location(request.path, conf);
 
-    std::cout << "POST method received!" << std::endl;
-    std::cout << "Request path: " << request.path << std::endl;
+    if (location == NULL)
+    {
+        status = "404 Not Found";
+        body = "404 Not Found\n";
+        return;
+    }
 
-    if (location != NULL)
-        std::cout << "Location found: " << location->path << std::endl;
-    else
-        std::cout << "Location not found" << std::endl;
-
-    if (location != NULL && !location->allowed_methods.empty())
+    if (!location->allowed_methods.empty())
     {
         bool allowed = false;
-    
-        for(std::size_t i = 0; i < location->allowed_methods.size(); ++i)
+
+        for (std::size_t i = 0; i < location->allowed_methods.size(); ++i)
         {
             if (location->allowed_methods[i] == "POST")
             {
@@ -3504,7 +2697,7 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
                 break;
             }
         }
-    
+
         if (!allowed)
         {
             status = "405 Method Not Allowed";
@@ -3513,15 +2706,74 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
         }
     }
 
-    // Check whether file uploads are enabled.
-    if (location == NULL || !location->upload_enabled)
+    const std::map<std::string, std::string>::const_iterator type =
+        request.headers.find("content-type");
+
+
+    if (type == request.headers.end())
+    {
+        if (request.body.empty())
+        {
+            status = "200 OK";
+            body = "POST received\n";
+        }
+        else
+        {
+            status = "415 Unsupported Media Type";
+            body = "Missing Content-Type\n";
+        }
+        return;
+    }
+
+    std::string media_type =
+        type->second.substr(0, type->second.find(';'));
+
+    std::string::size_type first =
+        media_type.find_first_not_of(" \t");
+
+    std::string::size_type last =
+        media_type.find_last_not_of(" \t");
+
+    if (first == std::string::npos)
+    {
+        media_type.clear();
+    }
+    else
+    {
+        media_type = media_type.substr(first, last - first + 1);
+    }
+
+    for (std::size_t i = 0; i < media_type.size(); ++i)
+    {
+        if (media_type[i] >= 'A' && media_type[i] <= 'Z')
+        {
+            media_type[i] =
+                static_cast<char>(media_type[i] + ('a' - 'A'));
+        }
+    }
+
+    if (media_type == "text/plain"
+        || media_type == "application/x-www-form-urlencoded")
+    {
+        status = "200 OK";
+        body = "POST received\n";
+        return;
+    }
+
+    if (media_type != "multipart/form-data")
+    {
+        status = "200 OK";
+        body = "POST received\n";
+        return;
+    }
+
+    if (!location->upload_enabled)
     {
         status = "403 Forbidden";
         body = "File uploads are not allowed\n";
         return;
     }
 
-    // Check whether the upload destination is configured.
     if (location->upload_path.empty())
     {
         status = "500 Internal Server Error";
@@ -3529,30 +2781,9 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
         return;
     }
 
-    
-
-    const std::map<std::string, std::string>::const_iterator type = request.headers.find("content-type");
-    if (type == request.headers.end())
-    {
-        status = "400 Bad Request";
-        body = "Missing Content-Type\n";
-        return;
-    }
-    std::string media_type = type->second.substr(0, type->second.find(';'));
-    const std::string::size_type last = media_type.find_last_not_of(" \t");
-    media_type.erase(last == std::string::npos ? 0 : last + 1);
-    for (std::size_t i = 0; i < media_type.size(); ++i)
-        if (media_type[i] >= 'A' && media_type[i] <= 'Z')
-            media_type[i] = static_cast<char>(media_type[i] + ('a' - 'A'));
-    if (media_type != "multipart/form-data")
-    {
-        status = "415 Unsupported Media Type";
-        body = "Expected multipart/form-data\n";
-        return;
-    }
-
     std::vector<Upload::UploadedFile> files;
     std::string error;
+
     if (!Upload::parse_multipart(type->second, request.body, files, error)
         || files.empty())
     {
@@ -3561,8 +2792,8 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
         return;
     }
 
-    // Detect duplicate names before creating any files.
     std::set<std::string> names;
+
     for (std::size_t i = 0; i < files.size(); ++i)
     {
         if (!names.insert(files[i].filename).second)
@@ -3572,6 +2803,7 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
             return;
         }
     }
+
     for (std::size_t i = 0; i < files.size(); ++i)
     {
         if (!Upload::save_file(location->upload_path, files[i].filename,
@@ -3579,34 +2811,55 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
         {
             const int saved_error = errno;
             bool cleaned = true;
-            // Roll back only files successfully created by this request.
+
             for (std::size_t j = 0; j < i; ++j)
             {
                 std::string path = location->upload_path;
-                if (path[path.size() - 1] != '/')
+
+                if (!path.empty() && path[path.size() - 1] != '/')
+                {
                     path += '/';
+                }
+
                 path += files[j].filename;
+
                 if (std::remove(path.c_str()) != 0)
+                {
                     cleaned = false;
+                }
             }
+
             if (!cleaned)
+            {
                 status = "500 Internal Server Error";
+            }
             else if (saved_error == EEXIST)
+            {
                 status = "409 Conflict";
+            }
             else if (saved_error == EACCES || saved_error == EPERM
                      || saved_error == EROFS)
+            {
                 status = "403 Forbidden";
+            }
             else if (saved_error == EINVAL)
+            {
                 status = "400 Bad Request";
+            }
             else
+            {
                 status = "500 Internal Server Error";
+            }
+
             body = status + "\n";
             return;
         }
     }
+
     status = "201 Created";
     body = "Files uploaded\n";
 }
+
 
 
 
@@ -3947,7 +3200,7 @@ namespace
     }
 }
 
-std::string Server::build_response(ClientConnection &client,const HttpRequest &request,const ServerConfig &conf)
+std::string Server::build_response(ClientConnection &client, const HttpRequest &request, const ServerConfig &conf)
 {
     const Router router(conf);
     const StaticFileHandler files(conf, router);
@@ -3984,7 +3237,7 @@ std::string Server::build_response(ClientConnection &client,const HttpRequest &r
 
             routed.path = route.uri;
 
-            if (request.method == "GET" || request.method == "POST")
+            if (request.method == "POST")
             {
                 const CgiConfig *cgi_config =
                     find_cgi_config(route.uri, route.location);
@@ -3998,6 +3251,7 @@ std::string Server::build_response(ClientConnection &client,const HttpRequest &r
                             routed,
                             route.fs_path,
                             cgi_config->interpreter,
+                            routed.path,
                             error_status))
                     {
                         return "";
@@ -4025,12 +3279,14 @@ std::string Server::build_response(ClientConnection &client,const HttpRequest &r
                 handle_delete(routed, conf, status, body);
                 response = finish_handler_response(files, status, body);
             }
+
             break;
         }
     }
 
     return response.build(request.version);
 }
+
 
 
 
@@ -4077,20 +3333,25 @@ bool Server::get_content_length(const std::string &headers_part,std::size_t &con
 }
 
 
-bool Server::check_max_body_size(ClientConnection &client, std::size_t content_length, const ServerConfig &conf)
+bool Server::check_max_body_size(ClientConnection &client,std::size_t content_length,std::size_t max_body_size)
 {
-    if (conf.client_max_body_size > 0 && content_length > conf.client_max_body_size)
+    if (max_body_size > 0 && content_length > max_body_size)
     {
-        std::cerr << "Error: Request body exceeds client_max_body_size" << std::endl;
         HttpRequest dummy_req;
         dummy_req.version = "HTTP/1.1";
+
         std::string status = "413 Payload Too Large";
-        std::string body = "413 Payload Too Large\n";
-        client.response_buffer = create_response_data(dummy_req, status, body) + body;
+        std::string body = status + "\n";
+
+        client.response_buffer =
+            create_response_data(dummy_req, status, body) + body;
+
         client.request_complete = true;
         client.response_ready = true;
+
         return true;
     }
+
     return false;
 }
 
@@ -4135,46 +3396,68 @@ void Server::parse_and_respond(ClientConnection &client, HttpParser &http_parser
     }
 }
 
-
 bool Server::read_client_data(ClientConnection &client, bool &stop_processing)
 {
     const std::size_t MAX_HEADER_SIZE = 32 * 1024;
+    const std::size_t MAX_READ_PER_EVENT = 1024 * 1024;
 
-    char buffer[4096];
+    char buffer[64 * 1024];
+    std::size_t total_read = 0;
+
     stop_processing = false;
 
-    ssize_t bytes_read = recv(client.fd, buffer, sizeof(buffer), 0);
-
-    if (bytes_read == 0)
-        return false;
-
-    if (bytes_read < 0)
+    while (total_read < MAX_READ_PER_EVENT)
     {
-        stop_processing = true;
-        return true;
-    }
+        std::size_t bytes_to_read = sizeof(buffer);
+        std::size_t remaining = MAX_READ_PER_EVENT - total_read;
 
-    client.last_activity = time(NULL);
+        if (bytes_to_read > remaining)
+            bytes_to_read = remaining;
 
-    client.request_buffer.append(
-        buffer,
-        static_cast<std::string::size_type>(bytes_read)
-    );
+        ssize_t bytes_read = recv(
+            client.fd,
+            buffer,
+            bytes_to_read,
+            0
+        );
 
-    std::string::size_type header_end = client.request_buffer.find("\r\n\r\n");
+        if (bytes_read == 0)
+        {
+            if (total_read == 0)
+                return false;
+            break;
+        }
 
-    if (header_end == std::string::npos)
-    {
-        if (client.request_buffer.size() > MAX_HEADER_SIZE)
+        if (bytes_read < 0)
+            break;
+
+        client.last_activity = time(NULL);
+
+        client.request_buffer.append(
+            buffer,
+            static_cast<std::size_t>(bytes_read)
+        );
+
+        total_read += static_cast<std::size_t>(bytes_read);
+
+        std::string::size_type header_end =
+            client.request_buffer.find("\r\n\r\n");
+
+        if (header_end == std::string::npos)
+        {
+            if (client.request_buffer.size() > MAX_HEADER_SIZE)
+            {
+                client.header_too_large = true;
+                stop_processing = true;
+                return true;
+            }
+        }
+        else if (header_end + 4 > MAX_HEADER_SIZE)
         {
             client.header_too_large = true;
             stop_processing = true;
+            return true;
         }
-    }
-    else if (header_end + 4 > MAX_HEADER_SIZE)
-    {
-        client.header_too_large = true;
-        stop_processing = true;
     }
 
     return true;
@@ -4293,6 +3576,8 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
     std::string headers_part = client.request_buffer.substr(0, header_end);
     std::string::size_type body_start = header_end + 4;
 
+    const std::size_t max_body_size = get_request_body_limit(headers_part, conf);
+
     bool chunked = false;
     std::size_t content_length = 0;
     if (!HttpParser::get_body_framing(headers_part, chunked, content_length))
@@ -4311,7 +3596,7 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
     {
         std::string decoded_body;
 
-        ChunkedStatus chunked_status = HttpParser::unchunk_body(client.request_buffer.substr(body_start), decoded_body, conf.client_max_body_size);
+    ChunkedStatus chunked_status = HttpParser::unchunk_body(client.request_buffer.substr(body_start),decoded_body,max_body_size);
 
         if (chunked_status == CHUNKED_INCOMPLETE)
             return true;
@@ -4337,12 +3622,12 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
             return true;
         }
 
-        if (check_max_body_size(client, decoded_body.size(), conf))
+        if (check_max_body_size(client, decoded_body.size(), max_body_size))
             return true;
     }
     else
     {
-        if (check_max_body_size(client, content_length, conf))
+        if (check_max_body_size(client, content_length, max_body_size))
             return true;
 
         if (client.request_buffer.size() - body_start < content_length)
@@ -4662,6 +3947,8 @@ void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vecto
                 {
                     if (!cgi->handle_stdin_write(error_status))
                         io_ok = false;
+                    else
+                        client_it->last_activity = time(NULL);
                 }
             }
         
@@ -4676,6 +3963,8 @@ void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vecto
                 {
                     if (!cgi->handle_stdout_read(error_status))
                         io_ok = false;
+                    else
+                        client_it->last_activity = time(NULL);
                 }
                 else if (output_events & POLLHUP)
                     cgi->close_stdout();
@@ -4756,10 +4045,44 @@ void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vecto
         }
     }
 }
+
+
+std::size_t Server::get_request_body_limit(const std::string &headers_part,const ServerConfig &conf) const
+{
+    std::istringstream stream(headers_part);
+    std::string request_line;
+
+    if (!std::getline(stream, request_line))
+        return conf.client_max_body_size;
+
+    std::istringstream line(request_line);
+    HttpRequest request;
+    std::string extra;
+
+    if (!(line >> request.method >> request.path >> request.version))
+        return conf.client_max_body_size;
+
+    if (line >> extra)
+        return conf.client_max_body_size;
+
+    std::string::size_type query = request.path.find('?');
+
+    if (query != std::string::npos)
+        request.path.erase(query);
+
+    RouteResult route = Router(conf).route(request);
+
+    if (route.location != NULL &&
+        route.location->client_max_body_size_defined)
+        return route.location->client_max_body_size;
+
+    return conf.client_max_body_size;
+}
+
 void Server::run(HttpParser &parser)
 {
     std::vector<ClientConnection> clients;
-    const time_t TIMEOUT_SECONDS = 5;
+    const time_t TIMEOUT_SECONDS = 160;
 
     while (true)
     {
@@ -5868,6 +5191,939 @@ bool Upload::parse_multipart(const std::string &content_type,
     return true;
 }
 
+
+========================================
+FILE: src/main.cpp
+========================================
+
+#include "../hpp/webserv.hpp"
+#include "../hpp/Server.hpp"
+#include "../hpp/HttpRequest.hpp"
+
+
+
+
+
+void print_conf(const std::vector<ServerConfig> &configs)
+{
+    for (std::size_t i = 0; i < configs.size(); ++i)
+    {
+        std::cout << "\n===== SERVER " << i + 1 << " =====\n";
+    
+        for (std::map<int, std::string>::const_iterator it =
+                configs[i].error_pages.begin();
+             it != configs[i].error_pages.end(); ++it)
+        {
+            std::cout << "Error code: " << it->first
+                      << " | Page: " << it->second << std::endl;
+        }
+    }
+    for (std::size_t i = 0; i < configs.size(); ++i)
+    {
+        std::cout << "\n===== SERVER " << i + 1 << " =====" << std::endl;
+    
+        for (std::size_t j = 0; j < configs[i].locations.size(); ++j)
+        {
+            const LocationConfig &loc = configs[i].locations[j];
+        
+            std::cout << "Location: " << loc.path << std::endl;
+            std::cout << "Return code: " << loc.return_code << std::endl;
+            std::cout << "Return URL: " << loc.return_url << std::endl;
+            std::cout << "Root: " << loc.root << std::endl;
+            std::cout << "Index: " << loc.index << std::endl;
+            std::cout << "autoindex: " << loc.autoindex << std::endl;
+            std::cout << "uppload: " << loc.upload_enabled << std::endl;
+            std::cout << "upload_path: " << loc.upload_path << std::endl;
+            std::cout << "Max body size: " << configs[i].client_max_body_size << " bytes" << std::endl;
+            std::cout << "CGI count: " << loc.cgi.size() << std::endl;
+            for (std::size_t k = 0; k < loc.cgi.size(); ++k)
+            {
+                std::cout << "CGI extension: "
+                          << loc.cgi[k].extension << std::endl;
+            
+                std::cout << "CGI interpreter: "
+                          << loc.cgi[k].interpreter << std::endl;
+            }
+        }
+        for (std::size_t i = 0; i < configs.size(); ++i)
+        {
+            std::cout << "\nServer " << i + 1 << std::endl;
+            std::cout << "IP: " << configs[i].ip << std::endl;
+            std::cout << "Port: " << configs[i].port << std::endl;
+            std::cout << "Root: " << configs[i].root << std::endl;
+            std::cout << "Index: " << configs[i].index << std::endl;
+        }
+    }
+
+}
+
+int init_webserv(std::string &path)
+{
+    webserv web(path);
+    Tokenizer Tok;
+    Parser pars;
+    HttpParser Http_parser;
+    std::vector<ServerConfig> configs;
+
+
+    // pars.print_tokens();
+    
+    try
+    {
+        web.take_path();
+        if (!Tok.open_file_empty_and_valid(web.get_path()))
+            throw std::runtime_error("Invalid configuration file");
+
+        Tok.create_tokens();
+        pars.set_token(Tok.get_token());
+
+        configs =  pars.start_parse();
+            
+        for (std::size_t i = 0; i < configs.size(); ++i)
+            pars.validate_root(configs[i]);
+        print_conf(configs);
+        Server serv(configs);
+        serv.create_socket();
+        std::cout << "Socket created successfully" << std::endl;
+        
+
+        serv.bind_socket();
+        serv.listen_socket();
+        serv.run(Http_parser);  
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Config error: " << e.what() << std::endl;
+        return  1;
+    }
+    return (0);
+}
+   
+
+int main(int argc, char *argv[])
+{
+    std::string path;
+
+    path = "";
+    if(argc == 2)
+        path = argv[1];
+    if(argc > 2)
+    {
+        std::cout << "Error wrong argument" << std::endl;  
+        return 1;
+    }
+    return (init_webserv(path));
+}
+
+
+
+========================================
+FILE: src/parser.cpp
+========================================
+
+#include "parser.hpp"
+
+Parser::Parser() : _index(0)
+{
+}
+Parser::Parser(const std::vector<Token> &tokens) : _tokens(tokens), _index(0)
+{
+}
+
+void Parser::set_token(const std::vector<Token> &tokens)
+{
+    _tokens = tokens;
+    _index = 0;
+}
+
+Parser::Parser(const Parser &other) : _tokens(other._tokens), _index(other._index)
+{
+}
+
+Parser &Parser::operator=(const Parser &other)
+{
+    if (this != &other)
+    {
+        _tokens = other._tokens;
+        _index = other._index;
+    }
+    return *this;
+}
+
+
+void Parser::print_tokens(void)
+{
+    std::cout << "------ in parse -> \n \n" ;
+    for (size_t i = 0; i < this->_tokens.size(); ++i)
+    {
+        std::cout << "Index: " << i 
+                  << " | Type: " << this->_tokens[i].type
+                  << " | Value: [ " << this->_tokens[i].value << " ]" 
+                  << std::endl;
+    }
+}
+
+
+void Parser::warn_duplicate_listen_without_server_name(const std::vector<ServerConfig> &servers) const
+{
+    for (std::size_t i = 0; i < servers.size(); ++i)
+    {
+        for (std::size_t j = i + 1; j < servers.size(); ++j)
+        {
+            bool same_listen = false;
+            std::string shared_ip;
+            int shared_port = 0;
+
+            for (std::size_t a = 0; a < servers[i].listens.size() && !same_listen; ++a)
+            {
+                for (std::size_t b = 0; b < servers[j].listens.size(); ++b)
+                {
+                    if (servers[i].listens[a].ip == servers[j].listens[b].ip && servers[i].listens[a].port == servers[j].listens[b].port)
+                    {
+                        same_listen = true;
+                        shared_ip = servers[i].listens[a].ip;
+                        shared_port = servers[i].listens[a].port;
+                        break;
+                    }
+                }
+            }
+            if (same_listen && servers[i].server_name.empty() && servers[j].server_name.empty())
+            {
+                std::cerr << "WARNING: server blocks "
+                << i + 1 << " and " << j + 1 << " use the same listen address "
+                << shared_ip << ":" << shared_port << " without server_name."
+                << std::endl;
+            }
+            else if (same_listen && !servers[i].server_name.empty() && servers[i].server_name == servers[j].server_name)
+            {
+                std::cerr << "WARNING: duplicate server_name '"
+                << servers[i].server_name << "' in server blocks "
+                << i + 1 << " and " << j + 1 << " on "
+                << shared_ip << ":" << shared_port << "."
+                << std::endl;
+            }
+        }
+    }
+}
+
+
+
+
+void Parser::parse_root(ServerConfig &conf, bool &root_defined)
+{
+    if (root_defined)
+        throw std::runtime_error("Duplicate 'root' directive");
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected path after 'root'");
+
+    std::string path = _tokens[_index].value;
+    if (path.empty())
+        throw std::runtime_error("Root path cannot be empty");
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after 'root'");
+    conf.root = path;
+    ++_index;
+    root_defined = true;
+}
+void Parser::parse_index( ServerConfig &conf, bool &index_defined)
+{
+    if (index_defined)
+        throw std::runtime_error("Duplicate 'index' directive");
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected filename after 'index'");
+    conf.index = _tokens[_index].value;
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after 'index'");
+    ++_index;
+    index_defined = true;
+}
+
+
+bool Parser::is_valid_ipv4(const std::string& ip)
+{
+    int parts = 0;
+    std::string::size_type start = 0;
+
+    while(true)
+    {
+        std::string::size_type dot = ip.find('.', start);
+        std::string part;
+        int number = 0;
+
+        if(dot == std::string::npos)
+            part = ip.substr(start);
+        else
+            part = ip.substr(start, dot - start);
+
+        if (part.empty() || part.size() > 3)
+            return false;
+        for (std::string::size_type i = 0; i < part.size(); ++i)
+        {
+            if (part[i] < '0' || part[i] > '9')
+                return false;
+            number = number * 10 + (part[i] - '0');
+        }
+        if (number > 255)
+            return false;
+        ++parts;
+        if (dot == std::string::npos)
+            break;
+        start = dot + 1;
+    }
+    return parts == 4;
+}
+
+
+bool Parser::is_valid_port(const std::string& port)
+{
+    int number = 0;
+
+    if (port.empty() || port.size() > 5)
+        return false;
+    for (std::string::size_type i = 0; i < port.size(); ++i)
+    {
+        if (port[i] < '0' || port[i] > '9')
+            return false;
+
+        number = number * 10 + (port[i] - '0');
+    }
+    if (number < 1 || number > 65535)
+        return false;
+    return true;
+}
+
+void Parser::parse_listen(ServerConfig &conf, bool &listen_defined)
+{
+    ++_index;
+
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected address after 'listen'");
+
+    std::string address = _tokens[_index].value;
+    std::string::size_type colon = address.find(':');
+    if (colon == std::string::npos || address.find(':', colon + 1) != std::string::npos)
+        throw std::runtime_error("Invalid listen address: expected IPv4:port");
+    std::string ip = address.substr(0, colon);
+    std::string port = address.substr(colon + 1);
+
+    if (!is_valid_ipv4(ip))
+        throw std::runtime_error("Invalid IPv4 address");
+
+    if (!is_valid_port(port))
+        throw std::runtime_error("Invalid port");
+
+    ListenConfig listen;
+    listen.ip = ip;
+    listen.port = std::atoi(port.c_str());
+
+    for (std::size_t i = 0; i < conf.listens.size(); ++i)
+    {
+        if (conf.listens[i].ip == listen.ip && conf.listens[i].port == listen.port)
+            throw std::runtime_error("Duplicate listen address");
+    }
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after 'listen'");
+    ++_index;
+    listen_defined = true;
+    conf.listens.push_back(listen);
+    if (conf.listens.size() == 1)
+    {
+        conf.ip = listen.ip;
+        conf.port = listen.port;
+    }
+    std::cout << "Listen IP: " << ip << std::endl;
+    std::cout << "Listen port: " << port << std::endl;
+}
+
+
+void Parser::check_location(const ServerConfig &conf) const
+{
+    for(size_t i = 0; i < conf.locations.size(); ++i)
+    {
+        const LocationConfig &location = conf.locations[i];
+
+        if (location.root.empty() && location.return_code == 0)
+            throw std::runtime_error("Missing root for location: " + location.path);
+
+
+        if (!location.root.empty())
+            validate_directory(location.root, "location root", R_OK | X_OK);
+        // Check upload directory
+        if (location.upload_enabled)
+            validate_directory(location.upload_path, "upload path",W_OK | X_OK);
+        for (std::size_t j = 0; j < location.cgi.size(); ++j)
+        {
+            validate_executable(location.cgi[j].interpreter, "CGI interpreter");
+        }
+    }
+}
+
+
+
+void Parser::validate_directory(const std::string &path, const std::string &name, int permissions) const
+{
+    struct stat info;
+
+    if (path.empty())
+        throw std::runtime_error(name + " path is empty");
+    if (stat(path.c_str(), &info) != 0)
+        throw std::runtime_error(
+            "Cannot access " + name + ": " + path);
+
+    if (!S_ISDIR(info.st_mode))
+        throw std::runtime_error(
+            name + " is not a directory: " + path);
+
+    if (access(path.c_str(), permissions) != 0)
+        throw std::runtime_error(
+            "Insufficient permissions for " + name + ": " + path);
+}
+
+void Parser::validate_executable(const std::string &path, const std::string &name) const
+{
+    struct stat info;
+
+    if (path.empty())
+        throw std::runtime_error(name + " path is empty");
+    if (stat(path.c_str(), &info) != 0)
+        throw std::runtime_error("Cannot access " + name + ": " + path);
+
+    if (!S_ISREG(info.st_mode))
+        throw std::runtime_error(name + " is not a regular file: " + path);
+
+    if (access(path.c_str(), X_OK) != 0)
+        throw std::runtime_error(name + " is not executable: " + path);
+}
+
+void Parser::validate_root(const ServerConfig &conf) const
+{
+
+    if (!conf.root.empty())
+        validate_directory(conf.root, "server root", R_OK | X_OK);
+    check_location(conf);
+}
+
+
+void Parser::parse_location_root(LocationConfig &location)
+{
+    if (_index >= _tokens.size() ||
+        _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected path after 'root' in location");
+    location.root = _tokens[_index].value;
+    ++_index;
+    if (_index >= _tokens.size() ||
+        _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after location root");
+    ++_index;
+}
+   
+void Parser::parse_location_index(LocationConfig &location)
+{
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected filename after 'index' in location");
+    location.index = _tokens[_index].value;
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after location index");
+    ++_index;
+}
+
+
+void Parser::parse_location_allowed_methods(LocationConfig &location)
+{
+    bool methood_found = false;
+    std::string  method;
+    while(_index < _tokens.size() && _tokens[_index].type != TOKEN_SEMICOLON)
+    {
+        if(_tokens[_index].type != TOKEN_ARGUMENT)
+            throw std::runtime_error("Expected HTTP method");
+        
+        method = _tokens[_index].value;
+        if(method != "GET" && method != "POST" && method != "DELETE")
+            throw std::runtime_error("Invalid method HTTP");
+
+        for(std::size_t i = 0; i < location.allowed_methods.size(); ++i)
+        {
+            if(location.allowed_methods[i] == method)
+                throw std::runtime_error("Duplicate HTTP method" + method);
+        }
+        location.allowed_methods.push_back(method);
+        methood_found = true;
+        ++_index;
+    }
+    if(!methood_found)
+        throw std::runtime_error("AT least one HTTP methood is required");
+    if(_index >= _tokens.size()  || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after allowed_methods");
+    ++_index;
+}
+
+void Parser::parse_location_return(LocationConfig &location)
+{
+    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected return status code ");
+
+    const std::string code = _tokens[_index].value;
+    
+    if(code != "301" && code != "302" && code != "303" && code != "307" && code != "308")
+        throw std::runtime_error("Only return 301,302 303, 307, 308 is supported -> " + code);
+    
+    location.return_code = std::atoi(code.c_str());
+    ++_index;
+    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected return URL");
+    
+    location.return_url = _tokens[_index].value;
+    ++_index;
+    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';'  after return");
+    ++_index;
+
+    std::cout << "return code -> " << location.return_code << "\n";
+    std::cout << "return URL -> " << location.return_url  << "\n";
+}
+
+
+void Parser::parse_location_upload(LocationConfig &location)
+{
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected 'on' or 'off' after upload");
+    
+    const std::string value = _tokens[_index].value;
+
+    if (value == "on")
+        location.upload_enabled = true;
+    else if (value == "off")
+        location.upload_enabled = false;
+    else
+        throw std::runtime_error("Invalid upload value: " + value);
+
+    ++_index;
+
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after upload");
+
+    ++_index;
+
+}
+
+void Parser::parse_location_upload_path(LocationConfig &location)
+{
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected path after 'upload_path'");
+
+    const std::string path = _tokens[_index].value;
+    if (path.empty())
+        throw std::runtime_error("Upload path cannot be empty");
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after upload_path");
+    ++_index;
+    location.upload_path = path;
+}
+
+
+void Parser::parse_location_cgi(LocationConfig &location)
+{
+
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected CGI extension");
+    const std::string ext = _tokens[_index].value;
+    if (ext.size() < 2 || ext[0] != '.' || ext.find('/') != std::string::npos || ext.find('\\') != std::string::npos)
+        throw std::runtime_error("Invalid CGI extension");
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected CGI interpreter");
+    const std::string interpreter = _tokens[_index].value;
+    if (interpreter.empty())
+        throw std::runtime_error("CGI interpreter cannot be empty");
+    for (std::size_t i = 0; i < location.cgi.size(); ++i)
+    {
+        if (location.cgi[i].extension == ext)
+            throw std::runtime_error("Duplicate CGI extension: " + ext);
+    }
+    ++_index;
+
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after cgi");
+    ++_index;
+    CgiConfig config;
+    config.extension = ext;
+    config.interpreter = interpreter;
+
+    location.cgi.push_back(config);
+}
+
+void Parser::parse_location_client_max_body_size(LocationConfig &location)
+{
+    ++_index;
+
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected size after 'client_max_body_size'");
+
+    const std::string value = _tokens[_index].value;
+    std::string::size_type pos = 0;
+
+    while (pos < value.size() && value[pos] >= '0' && value[pos] <= '9')
+        ++pos;
+
+    if (pos == 0)
+        throw std::runtime_error("Invalid client_max_body_size value");
+
+    std::string number_part = value.substr(0, pos);
+    std::string suffix = value.substr(pos);
+
+    std::size_t multiplier = 1;
+    std::size_t number = 0;
+
+    bit_size(suffix, multiplier);
+    get_number_multiplayer(number_part, number);
+
+    if (number > std::numeric_limits<std::size_t>::max() / multiplier)
+        throw std::runtime_error("client_max_body_size overflow");
+
+    location.client_max_body_size = number * multiplier;
+
+    ++_index;
+
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after client_max_body_size");
+
+    ++_index;
+}
+
+void Parser::parse_location_directives(LocationConfig &location)
+{
+    bool root_defined = false;
+    bool index_defined = false;
+    bool methods_defined = false;
+    bool return_defined = false;
+    bool autoindex_defined = false;
+    bool upload_defined = false;
+    bool upload_path_defined = false;
+    while (_index < _tokens.size() && _tokens[_index].type != TOKEN_RBRACE)
+    {
+        if (_tokens[_index].type == TOKEN_ROOT)
+        {
+            if (root_defined)
+                throw std::runtime_error("Duplicate 'root' directive in location");
+            ++_index;
+            parse_location_root(location);
+            root_defined = true;
+        }
+        else if (_tokens[_index].type == TOKEN_INDEX)
+        {
+            if (index_defined)
+                throw std::runtime_error("Duplicate 'index' directive in location");
+            ++_index;
+            parse_location_index(location);
+            index_defined = true; 
+        }
+        else if (_tokens[_index].type == TOKEN_ALLOWED_METHODS)
+        {
+            if(methods_defined)
+                throw std::runtime_error("Duplicate 'allowed_methods' ");
+            ++_index;
+            parse_location_allowed_methods(location);
+            methods_defined = true;
+        }
+        else if(_tokens[_index].type == TOKEN_RETURN)
+        {
+            if(return_defined)
+                throw std::runtime_error("Duplicate 'return' directives in location");
+            ++_index;
+            parse_location_return(location);
+            return_defined = true;
+        }
+        else if (_tokens[_index].type == TOKEN_AUTOINDEX)
+        {
+            if (autoindex_defined)
+                throw std::runtime_error("Duplicate 'autoindex' directive");
+        
+            ++_index;
+            parse_location_autoindex(location);
+            autoindex_defined = true;
+        }
+        else if (_tokens[_index].type == TOKEN_UPLOAD)
+        {
+            if (upload_defined)
+                throw std::runtime_error("Duplicate 'upload' directive");
+            ++_index;
+            parse_location_upload(location);
+            upload_defined = true;
+        }
+        else if(_tokens[_index].type == TOKEN_UPLOAD_PATH)
+        {
+            if (upload_path_defined)
+                throw std::runtime_error("Duplicate 'upload_path' directive");
+                
+            ++_index;
+            parse_location_upload_path(location);
+            upload_path_defined = true;
+        }
+        else if (_tokens[_index].type == TOKEN_CGI)
+        {
+            ++_index;
+            parse_location_cgi(location);
+        }
+        else if (_tokens[_index].type == TOKEN_CLIENT_MAX_BODY_SIZE)
+        {
+            if (location.client_max_body_size_defined)
+                throw std::runtime_error("Duplicate 'client_max_body_size' directive");
+        
+            parse_location_client_max_body_size(location);
+            location.client_max_body_size_defined = true;
+        }
+        else
+            throw std::runtime_error("Unknown directive inside location: '" + _tokens[_index].value + "'");
+    }
+    if (location.upload_enabled && location.upload_path.empty())
+        throw std::runtime_error("'upload on' requires 'upload_path'");
+}
+
+
+void Parser::parse_location(ServerConfig &conf)
+{
+    LocationConfig location;
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected path after 'location'");
+    location.path = _tokens[_index].value;
+    if (location.path.empty() || location.path[0] != '/')
+        throw std::runtime_error("Location path must start with '/'");
+    for (std::size_t i = 0; i < conf.locations.size(); ++i)
+    {
+        if (conf.locations[i].path == location.path)
+            throw std::runtime_error(
+                "Duplicate location: " + location.path);
+    }
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_LBRACE)
+        throw std::runtime_error("Expected '{' after location path");
+    ++_index;
+    parse_location_directives(location);
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_RBRACE)
+        throw std::runtime_error("Unexpected end of file: expected '}' after location");
+    ++_index;
+    conf.locations.push_back(location);
+}
+
+void Parser::parse_server_name(ServerConfig &conf, bool &server_name_defined)
+{
+    if(server_name_defined)
+        throw std::runtime_error("Duplicate 'server_name' directive");
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected hostname after 'server_name'");
+    conf.server_name = _tokens[_index].value;
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after 'server_name'");
+    ++_index;
+    server_name_defined = true;
+
+}
+
+void Parser::parse_error_page(ServerConfig &conf)
+{
+    ++_index;
+
+    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected HTTP error code after 'error_page'");
+    const std::string code = _tokens[_index].value;
+
+    if(code.size() != 3 || code[0] < '0' || code[0] > '9' || code[1] > '9' || code[1] < '0' || code[2] < '0' || code[2] > '9')
+        throw std::runtime_error("Invalid HTTP error code");
+
+    int status_code = std::atoi(code.c_str());
+
+    if(status_code < 400 || status_code > 599)
+        throw std::runtime_error("HTTP error code must be between 400 and 599");
+    if(conf.error_pages.find(status_code) != conf.error_pages.end())
+        throw std::runtime_error("Duplicate error_page status code");
+    ++_index;
+    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected HTTP error page URL");
+
+    const std::string path = _tokens[_index].value;
+
+    if(path.empty() || path[0] != '/')
+        throw std::runtime_error("Error page URI must start with '/'");
+    ++_index;
+
+    if(_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after error_page");
+    ++_index;
+    conf.error_pages[status_code] = path;
+}
+
+
+void Parser::bit_size(const std::string &suffix, std::size_t & multiplier)
+{ 
+    if (suffix.empty())
+    multiplier = 1;
+    else if (suffix == "K" || suffix == "k")
+        multiplier = 1024;
+    else if (suffix == "M" || suffix == "m")
+        multiplier = 1024 * 1024;
+    else if (suffix == "G" || suffix == "g")
+        multiplier = 1024 * 1024 * 1024;
+    else
+        throw std::runtime_error("Invalid size suffix");
+}
+
+void Parser::get_number_multiplayer( const std::string &number_part, std::size_t &number)
+{
+    const std::size_t max_size = std::numeric_limits<std::size_t>::max();
+
+    for (std::string::size_type i = 0; i < number_part.size(); ++i)
+    {
+        int digit = number_part[i] - '0';
+
+        if (number > (max_size - digit) / 10)
+            throw std::runtime_error("client_max_body_size overflow");
+
+        number = number * 10 + digit;
+    }
+}
+
+void Parser::parse_client_max_body_size(ServerConfig &conf, bool &defined)
+{
+    if (defined)
+        throw std::runtime_error("Duplicate 'client_max_body_size' directive");
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected size after 'client_max_body_size'");
+
+    const std::string value = _tokens[_index].value;
+    std::string::size_type pos = 0;
+
+    while(pos < value.size() && value[pos] >= '0'&& value[pos] <= '9')
+        ++pos;
+    if(pos == 0)
+        throw std::runtime_error("Invalid client_max_body_size value");
+    std::string number_part = value.substr(0, pos);
+    std::string suffix = value.substr(pos);
+    std::size_t multiplier = 1;
+    std::size_t number = 0;
+    bit_size(suffix, multiplier);
+
+    get_number_multiplayer(number_part, number);
+
+    if (number > std::numeric_limits<std::size_t>::max() / multiplier)
+        throw std::runtime_error("client_max_body_size overflow");
+
+    std::size_t size = number * multiplier;
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after client_max_body_size");
+    ++_index;
+
+    conf.client_max_body_size = size;
+    defined = true;
+}
+
+
+void Parser::parse_location_autoindex(LocationConfig &location)
+{
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_ARGUMENT)
+        throw std::runtime_error("Expected 'on' or 'off' after autoindex");
+    
+    const std::string value = _tokens[_index].value;
+
+    if(value == "on")
+        location.autoindex = true;
+    else if (value == "off")
+        location.autoindex = false;
+    else
+        throw std::runtime_error("Invalid autoindex value: " + value);
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SEMICOLON)
+        throw std::runtime_error("Expected ';' after autoindex");
+    ++_index;
+}
+
+void Parser::parse_server(ServerConfig &conf)
+{
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_SERVER)
+        throw std::runtime_error("Expected 'server'");
+    ++_index;
+    if (_index >= _tokens.size() || _tokens[_index].type != TOKEN_LBRACE)
+        throw std::runtime_error("Expected '{' after 'server'");
+    ++_index;
+    bool listen_defined = false;
+    bool server_name_defined = false;
+    bool root_defined = false;
+    bool index_defined = false;
+    bool client_max_body_size_defined = false;
+    while (_index < _tokens.size() &&  _tokens[_index].type != TOKEN_RBRACE)
+    {
+        if (_tokens[_index].type == TOKEN_LISTEN)
+            parse_listen(conf, listen_defined);
+        else if (_tokens[_index].type == TOKEN_SERVER_NAME)
+            parse_server_name(conf, server_name_defined);
+        else if (_tokens[_index].type == TOKEN_ROOT)
+            parse_root(conf, root_defined);
+        else if (_tokens[_index].type == TOKEN_INDEX)
+            parse_index(conf, index_defined);
+        else if (_tokens[_index].type == TOKEN_LOCATION)
+            parse_location(conf);
+        else if(_tokens[_index].type == TOKEN_ERROR_PAGE)
+            parse_error_page(conf);
+        else if (_tokens[_index].type == TOKEN_CLIENT_MAX_BODY_SIZE)
+            parse_client_max_body_size(conf, client_max_body_size_defined);
+        else
+            throw std::runtime_error("Unknown directive inside server");
+    }
+    if (_index >= _tokens.size())
+        throw std::runtime_error("Unexpected end of file: expected '}'");
+
+    ++_index;
+    if (!listen_defined)
+        throw std::runtime_error("Missing required directive: listen");
+    if (!root_defined)
+        throw std::runtime_error("Missing required directive: root");
+    for (std::size_t i = 0; i < conf.locations.size(); ++i)
+    {
+        if (conf.locations[i].root.empty())
+            conf.locations[i].root = conf.root;
+    }
+}
+
+
+std::vector<ServerConfig> Parser::start_parse()
+{
+    _index = 0;
+    std::vector<ServerConfig> servers;
+    if (_tokens.empty())
+        throw std::runtime_error("Config file is empty");
+
+
+    while (_index < _tokens.size())
+    {
+        if (_tokens[_index].type != TOKEN_SERVER)
+            throw std::runtime_error(
+                "Expected 'server' at the beginning of server block"
+            );
+
+        ServerConfig conf;
+        parse_server(conf);
+
+        servers.push_back(conf);
+    }
+    warn_duplicate_listen_without_server_name(servers);
+    return servers;
+}
+
+Parser::~Parser()
+{
+
+}
 
 ========================================
 FILE: src/webserv.cpp
