@@ -1675,8 +1675,7 @@ std::vector<struct pollfd> Server::build_poll_fds(const std::vector<ClientConnec
         if (clients[i].cgi_pending)
         {
             // Send pending CGI response data to the client.
-            if (clients[i].sent_bytes <
-                clients[i].response_buffer.size())
+            if (clients[i].sent_bytes < clients[i].response_buffer.size())
             {
                 client_poll.events |= POLLOUT;
             }
@@ -1741,7 +1740,7 @@ std::vector<struct pollfd> Server::build_poll_fds(const std::vector<ClientConnec
 
         fds.push_back(input_poll);
 
-        // CGI stdout: read only when the client can accept more data.
+        // Drain CGI output during request uploads to prevent pipe backpressure.
         struct pollfd output_poll;
 
         output_poll.fd = stdout_fd;
@@ -1759,14 +1758,14 @@ std::vector<struct pollfd> Server::build_poll_fds(const std::vector<ClientConnec
                 ++client_it;
             }
 
-            if (client_it != clients.end())
+           if (client_it != clients.end())
             {
                 if (!client_it->cgi_headers_prepared ||
                     !client_it->cgi_body_allowed ||
                     client_it->response_buffer.empty())
-                {
                     output_poll.events = POLLIN;
-                }
+                else
+                    output_poll.fd = -1;
             }
         }
 
@@ -1958,9 +1957,7 @@ void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vecto
             }
 
             short output_events = fds[output_index].revents;
-
-            bool can_read_output = !client_it->cgi_headers_prepared || !client_it->cgi_body_allowed || client_it->response_buffer.empty();
-
+            bool can_read_output = !client_it->cgi_headers_prepared || !client_it->cgi_body_allowed || client_it->response_buffer.empty(); 
             if (cgi->get_stdout_fd() != -1)
             {
                 if (output_events & (POLLNVAL | POLLERR))
@@ -2050,6 +2047,7 @@ void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vecto
                         }
                         else if (client_it->cgi_body_allowed)
                         {
+                            // Buffer output until upload completes; clients may not read yet.
                             client_it->response_buffer.swap(chunk);
                             client_it->sent_bytes = 0;
                             client_it->response_ready = true;
@@ -2196,7 +2194,7 @@ std::size_t Server::get_request_body_limit(const std::string &headers_part,const
 void Server::run(HttpParser &parser)
 {
     std::vector<ClientConnection> clients;
-    const time_t TIMEOUT_SECONDS = 160;
+    const time_t TIMEOUT_SECONDS = 5;
 
     while (true)
     {
