@@ -10,6 +10,8 @@
 #include <vector>
 #include <sstream>
 #include <cerrno>
+#include <map>
+#include <sstream>
 
 namespace
 {
@@ -67,17 +69,8 @@ namespace
         return true;
     }
 
-    std::string number_to_string(std::size_t number)
-    {
-        std::ostringstream ss;
-        ss << number;
-        return ss.str();
-    }
 
-    std::vector<std::string> build_environment(
-        const HttpRequest &request,
-        const std::string &script_path,
-        const std::string &path_info)
+    std::vector<std::string> build_environment(const HttpRequest &request,const std::string &script_path,const std::string &path_info)
     {
         std::vector<std::string> env;
 
@@ -89,10 +82,24 @@ namespace
         env.push_back("SCRIPT_NAME=" + request.path);
         env.push_back("SCRIPT_FILENAME=" + script_path);
         env.push_back("PATH_INFO=" + path_info);
-        env.push_back("CONTENT_LENGTH=" + number_to_string(request.body.size()));
 
         std::map<std::string, std::string>::const_iterator it;
 
+        // CONTENT_LENGTH
+        it = request.headers.find("content-length");
+
+        if (it != request.headers.end())
+        {
+            env.push_back("CONTENT_LENGTH=" + it->second);
+        }
+        else
+        {
+            std::ostringstream length;
+            length << request.body.size();
+            env.push_back("CONTENT_LENGTH=" + length.str());
+        }
+
+        // CONTENT_TYPE
         it = request.headers.find("content-type");
 
         if (it != request.headers.end())
@@ -100,11 +107,13 @@ namespace
         else
             env.push_back("CONTENT_TYPE=");
 
+        // REQUEST_URI
         env.push_back(
             "REQUEST_URI=" + request.path +
             (request.query_string.empty() ? "" : "?" + request.query_string)
         );
 
+        // Other HTTP headers
         for (it = request.headers.begin(); it != request.headers.end(); ++it)
         {
             if (it->first == "content-type" ||
@@ -132,34 +141,39 @@ namespace
     }
 }
 
+
 CgiHandler::CgiHandler(
     int client_fd,
-    const HttpRequest &request,
+    HttpRequest &request,
     const std::string &script_path,
     const std::string &interpreter_path,
     const std::string &path_info)
-    : _request(request),
-      _script_path(script_path),
-      _interpreter_path(interpreter_path),
-      _path_info(path_info),
-      _input_buffer(request.body),
-      _output_buffer(""),
-      _input_offset(0),
-      _pid(-1),
-      _client_fd(client_fd),
-      _stdin_fd(-1),
-      _stdout_fd(-1),
-      _stdin_closed(false),
-      _stdout_closed(false),
-      _child_exited(false),
-      _wait_status(0),
-      _started_at(0)
+    :
+    _http_version(request.version),
+    _environment(build_environment(request, script_path, path_info)),
+    _script_path(script_path),
+    _interpreter_path(interpreter_path),
+    _path_info(path_info),
+    _input_buffer(),
+    _output_buffer(),
+    _input_offset(0),
+    _input_complete(true),
+    _pid(-1),
+    _client_fd(client_fd),
+    _stdin_fd(-1),
+    _stdout_fd(-1),
+    _stdin_closed(false),
+    _stdout_closed(false),
+    _child_exited(false),
+    _wait_status(0),
+    _started_at(0)
 {
+    _input_buffer.swap(request.body);
 }
 
 const std::string &CgiHandler::get_http_version() const
 {
-    return _request.version;
+    return _http_version;
 }
 
 bool CgiHandler::was_successful() const
@@ -255,7 +269,7 @@ bool CgiHandler::start(std::string &error_status)
     if (script_name.empty())
         return false;
 
-    std::vector<std::string> env = build_environment(_request, _script_path, _path_info);
+    const std::vector<std::string> &env = _environment;
 
     std::vector<char *> envp;
 
@@ -362,11 +376,8 @@ bool CgiHandler::start(std::string &error_status)
 
     _started_at = time(NULL);
 
-    if (_input_buffer.empty())
-    {
-        close_fd(_stdin_fd);
-        _stdin_closed = true;
-    }
+    if (_input_buffer.empty() && _input_complete)
+        close_stdin();
 
     return true;
 }
@@ -386,7 +397,7 @@ int CgiHandler::get_stdout_fd() const
     return _stdout_fd;
 }
 
-const std::string &CgiHandler::get_output() const
+std::string &CgiHandler::get_output()
 {
     return _output_buffer;
 }
@@ -417,6 +428,65 @@ void CgiHandler::terminate()
 }
 
 
+void CgiHandler::enable_streaming_input()
+{
+    _input_complete = false;
+}
+
+bool CgiHandler::append_stdin_data( const char *data, std::size_t size)
+{
+    if (size == 0)
+        return true;
+
+    if (data == NULL || _stdin_closed || _input_complete)
+        return false;
+
+    const std::size_t MAX_BUFFER_SIZE = 64 * 1024;
+    const std::size_t pending = pending_stdin_bytes();
+
+    if (pending > MAX_BUFFER_SIZE ||
+        size > MAX_BUFFER_SIZE - pending)
+        return false;
+
+    if (_input_offset > 0)
+    {
+        _input_buffer.erase(0, _input_offset);
+        _input_offset = 0;
+    }
+
+    _input_buffer.append(data, size);
+    return true;
+}
+
+void CgiHandler::finish_stdin_input()
+{
+    if (_stdin_closed)
+        return;
+
+    _input_complete = true;
+
+    if (_input_offset >= _input_buffer.size())
+        close_stdin();
+}
+
+std::size_t CgiHandler::pending_stdin_bytes() const
+{
+    return _input_buffer.size() - _input_offset;
+}
+
+std::size_t CgiHandler::stdin_buffer_space() const
+{
+    const std::size_t MAX_BUFFER_SIZE = 64 * 1024;
+    const std::size_t pending = pending_stdin_bytes();
+
+    if (pending >= MAX_BUFFER_SIZE)
+        return 0;
+
+    return MAX_BUFFER_SIZE - pending;
+}
+
+
+
 bool CgiHandler::handle_stdin_write(std::string &error_status)
 {
     if (_stdin_closed || _stdin_fd == -1)
@@ -424,16 +494,22 @@ bool CgiHandler::handle_stdin_write(std::string &error_status)
 
     if (_input_offset >= _input_buffer.size())
     {
-        close_fd(_stdin_fd);
-        _stdin_closed = true;
+        std::string().swap(_input_buffer);
+        _input_offset = 0;
+
+        if (_input_complete)
+            close_stdin();
+
         return true;
     }
 
-    std::size_t remaining = _input_buffer.size() - _input_offset;
+    std::size_t remaining =
+        _input_buffer.size() - _input_offset;
+
     std::size_t chunk_size = remaining;
 
-    if (chunk_size > 4096)
-        chunk_size = 4096;
+    if (chunk_size > 64 * 1024)
+        chunk_size = 64 * 1024;
 
     ssize_t bytes_written = write(
         _stdin_fd,
@@ -444,8 +520,7 @@ bool CgiHandler::handle_stdin_write(std::string &error_status)
     if (bytes_written <= 0)
     {
         error_status = "502 Bad Gateway";
-        close_fd(_stdin_fd);
-        _stdin_closed = true;
+        close_stdin();
         return false;
     }
 
@@ -453,8 +528,11 @@ bool CgiHandler::handle_stdin_write(std::string &error_status)
 
     if (_input_offset >= _input_buffer.size())
     {
-        close_fd(_stdin_fd);
-        _stdin_closed = true;
+        std::string().swap(_input_buffer);
+        _input_offset = 0;
+
+        if (_input_complete)
+            close_stdin();
     }
 
     return true;
@@ -465,7 +543,7 @@ bool CgiHandler::handle_stdout_read(std::string &error_status)
     if (_stdout_closed || _stdout_fd == -1)
         return true;
 
-    char buffer[4096];
+    char buffer[64 * 1024];
 
     ssize_t bytes_read = read(_stdout_fd,buffer,sizeof(buffer));
 
@@ -492,10 +570,54 @@ bool CgiHandler::handle_stdout_read(std::string &error_status)
     return true;
 }
 
+
+bool CgiHandler::read_stdout_chunk(std::string &chunk, std::string &error_status)
+{
+    chunk.clear();
+
+    if (_stdout_closed || _stdout_fd == -1)
+        return true;
+
+    char buffer[64 * 1024];
+
+    ssize_t bytes_read = read(
+        _stdout_fd,
+        buffer,
+        sizeof(buffer)
+    );
+
+    if (bytes_read < 0)
+    {
+        error_status = "502 Bad Gateway";
+        close_fd(_stdout_fd);
+        _stdout_closed = true;
+        return false;
+    }
+
+    if (bytes_read == 0)
+    {
+        close_fd(_stdout_fd);
+        _stdout_closed = true;
+        return true;
+    }
+
+    chunk.assign(
+        buffer,
+        static_cast<std::size_t>(bytes_read)
+    );
+
+    return true;
+}
+
 void CgiHandler::close_stdin()
 {
+    _input_complete = true;
+
     close_fd(_stdin_fd);
     _stdin_closed = true;
+
+    std::string().swap(_input_buffer);
+    _input_offset = 0;
 }
 
 void CgiHandler::close_stdout()
@@ -507,13 +629,11 @@ bool CgiHandler::check_child(std::string &error_status)
 {
     if (_child_exited)
         return true;
-
     if (_pid <= 0)
     {
         error_status = "500 Internal Server Error";
         return false;
     }
-
     pid_t result;
 
     do
@@ -529,13 +649,9 @@ bool CgiHandler::check_child(std::string &error_status)
     {
         _child_exited = true;
         _pid = -1;
-
-        close_fd(_stdin_fd);
-        _stdin_closed = true;
-
+        close_stdin();
         return true;
     }
-
     error_status = "500 Internal Server Error";
     return false;
 }

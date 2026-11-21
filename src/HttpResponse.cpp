@@ -163,36 +163,70 @@ static std::string canonical_header_name(const std::string &lower)
 
 std::string HttpResponse::build_head(const std::string &version) const
 {
-    std::ostringstream head;
-    const std::string http_version = version.empty() ? "HTTP/1.1" : version;
+    return build_head_internal(version, _body.size(), true);
+}
 
-    head << http_version << " " << _status << " " << _reason << "\r\n";
+std::string HttpResponse::build_head(const std::string &version,std::size_t body_size) const
+{
+    return build_head_internal(version, body_size, true);
+}
+
+std::string HttpResponse::build_head_streaming(const std::string &version) const
+{
+    return build_head_internal(version, 0, false);
+}
+
+std::string HttpResponse::build_head_internal(const std::string &version,std::size_t body_size,bool include_content_length) const
+{
+    std::ostringstream head;
+
+    const std::string http_version =
+        version.empty() ? "HTTP/1.1" : version;
+
+    head << http_version << " " << _status << " "
+         << _reason << "\r\n";
+
     head << "Server: " << SERVER_NAME << "\r\n";
     head << "Date: " << http_date(time(NULL)) << "\r\n";
 
-    for (std::map<std::string, std::string>::const_iterator it = _headers.begin();
+    for (std::map<std::string, std::string>::const_iterator it =
+             _headers.begin();
          it != _headers.end(); ++it)
     {
-        // These four are always generated below, never copied.
-        if (it->first == "content-length" || it->first == "connection"
-            || it->first == "date" || it->first == "server")
+        if (it->first == "content-length"
+            || it->first == "connection"
+            || it->first == "date"
+            || it->first == "server")
             continue;
-        head << canonical_header_name(it->first) << ": " << it->second << "\r\n";
+
+        head << canonical_header_name(it->first)
+             << ": " << it->second << "\r\n";
     }
 
-    // 1xx / 204 / 304 must not carry a Content-Length or a body.
-    if (!status_has_no_body(_status))
-        head << "Content-Length: " << number_to_string(_body.size()) << "\r\n";
+    if (include_content_length &&
+        !status_has_no_body(_status))
+    {
+        head << "Content-Length: "
+             << number_to_string(body_size) << "\r\n";
+    }
+
     head << "Connection: close\r\n";
     head << "\r\n";
+
     return head.str();
 }
 
+
 std::string HttpResponse::build(const std::string &version) const
 {
+    std::string result = build_head(version);
+
     if (status_has_no_body(_status))
-        return build_head(version);
-    return build_head(version) + _body;
+        return result;
+
+    result.append(_body);
+
+    return result;
 }
 
 std::string HttpResponse::reason_phrase(int status)

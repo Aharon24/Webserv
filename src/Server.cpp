@@ -7,6 +7,23 @@
 #include <set>
 
 
+namespace
+{
+    void set_close_on_exec(int fd)
+    {
+        int flags = fcntl(fd, F_GETFD);
+
+        if (flags == -1 ||
+            fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == -1)
+        {
+            throw std::runtime_error(
+                "Failed to set close-on-exec"
+            );
+        }
+    }
+}
+
+
 Server::Server(const std::vector<ServerConfig> &configs) : _configs(configs)
 {
     std::signal(SIGPIPE, SIG_IGN);
@@ -33,28 +50,38 @@ void Server::create_socket()
     for (std::size_t i = 0; i < _listens.size(); ++i)
     {
         int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+
         if (server_fd == -1)
             throw std::runtime_error("Failed to create socket");
+
         int reuse = 1;
-        if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == -1)
+
+        if (setsockopt(
+                server_fd,
+                SOL_SOCKET,
+                SO_REUSEADDR,
+                &reuse,
+                sizeof(reuse)) == -1)
         {
             close(server_fd);
             throw std::runtime_error("Failed to set SO_REUSEADDR");
         }
+
         try
         {
             set_nonblocking(server_fd);
+            set_close_on_exec(server_fd);
         }
         catch (...)
         {
             close(server_fd);
-            server_fd = -1;
             throw;
         }
-        _server_fds.push_back(server_fd);
-        std::cout << "Created socket FD: " << server_fd << " for port: " << _listens[i].port << std::endl;
-    }
 
+        _server_fds.push_back(server_fd);
+
+        std::cout << "Created socket FD: "<< server_fd<< " for port: "<< _listens[i].port<< std::endl;
+    }
 }
 
 
@@ -90,19 +117,25 @@ int Server::accept_connection(int server_fd)
 
     if (client_fd == -1)
     {
-        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNABORTED)
+        if (errno == EINTR ||errno == EAGAIN ||errno == EWOULDBLOCK ||errno == ECONNABORTED)
+        {
             return -1;
+        }
+
         throw std::runtime_error("Failed to accept connection");
     }
+
     try
     {
         set_nonblocking(client_fd);
+        set_close_on_exec(client_fd);
     }
     catch (...)
     {
         close(client_fd);
         return -1;
     }
+
     return client_fd;
 }
 
@@ -141,7 +174,7 @@ const CgiConfig *Server::find_cgi_config(const std::string &uri,const LocationCo
     return NULL;
 }
 
-bool Server::start_cgi(ClientConnection &client,const HttpRequest &request,const std::string &script_path,const std::string &interpreter_path,const std::string &path_info,std::string &error_status)
+bool Server::start_cgi(ClientConnection &client,HttpRequest &request,const std::string &script_path,const std::string &interpreter_path,const std::string &path_info,std::string &error_status,bool streaming_input)
 {
     CgiHandler *cgi = new CgiHandler(
         client.fd,
@@ -150,6 +183,10 @@ bool Server::start_cgi(ClientConnection &client,const HttpRequest &request,const
         interpreter_path,
         path_info
     );
+
+    // Enable streaming before starting the CGI process.
+    if (streaming_input)
+        cgi->enable_streaming_input();
 
     if (!cgi->start(error_status))
     {
@@ -167,11 +204,113 @@ bool Server::start_cgi(ClientConnection &client,const HttpRequest &request,const
         throw;
     }
 
+    client.cgi_header_buffer.clear();
+    client.response_buffer.clear();
+    client.sent_bytes = 0;
+
+    client.cgi_streaming = false;
+    client.cgi_headers_prepared = false;
+    client.cgi_stream_finished = false;
+    client.cgi_body_allowed = true;
+
     client.cgi_pending = true;
+    client.cgi_input_streaming = streaming_input;
+
+    client.request_content_length = 0;
+    client.request_body_received = 0;
+
+    client.request_complete = false;
+    client.response_ready = false;
     client.last_activity = time(NULL);
 
     return true;
 }
+
+CgiHandler *Server::find_cgi_handler(int client_fd) const
+{
+    for (std::size_t i = 0; i < _cgi_processes.size(); ++i)
+    {
+        if (_cgi_processes[i] != NULL &&
+            _cgi_processes[i]->get_client_fd() == client_fd)
+        {
+            return _cgi_processes[i];
+        }
+    }
+
+    return NULL;
+}
+
+
+bool Server::pump_cgi_input(ClientConnection &client,CgiHandler &cgi)
+{
+    if (!client.cgi_input_streaming)
+        return true;
+
+    if (cgi.get_stdin_fd() == -1)
+    {
+        client.cgi_input_streaming = false;
+        client.request_complete = true;
+        std::string().swap(client.request_buffer);
+        return true;
+    }
+
+    if (client.request_body_received > client.request_content_length)
+        return false;
+
+    if (client.request_body_received == client.request_content_length)
+    {
+        cgi.finish_stdin_input();
+
+        client.cgi_input_streaming = false;
+        client.request_complete = true;
+
+        std::string().swap(client.request_buffer);
+        return true;
+    }
+
+    const std::size_t remaining =
+        client.request_content_length - client.request_body_received;
+
+    std::size_t bytes_to_append = client.request_buffer.size();
+
+    if (bytes_to_append > remaining)
+        bytes_to_append = remaining;
+
+    const std::size_t buffer_space = cgi.stdin_buffer_space();
+
+    if (bytes_to_append > buffer_space)
+        bytes_to_append = buffer_space;
+
+    if (bytes_to_append == 0)
+        return true;
+
+    if (!cgi.append_stdin_data(
+            client.request_buffer.data(),
+            bytes_to_append))
+    {
+        return false;
+    }
+
+    client.request_buffer.erase(0, bytes_to_append);
+
+    client.request_body_received += bytes_to_append;
+    client.last_activity = time(NULL);
+
+    if (client.request_body_received == client.request_content_length)
+    {
+        cgi.finish_stdin_input();
+
+        client.cgi_input_streaming = false;
+        client.request_complete = true;
+
+        std::string().swap(client.request_buffer);
+    }
+
+    return true;
+}
+
+
+
 
 void Server::collect_listens()
 {
@@ -398,8 +537,8 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
 
     if (media_type != "multipart/form-data")
     {
-        status = "200 OK";
-        body = "POST received\n";
+        status = "415 Unsupported Media Type";
+        body = "Unsupported Content-Type\n";
         return;
     }
 
@@ -442,10 +581,9 @@ void Server::handle_post(const HttpRequest &request, const ServerConfig &conf, s
 
     for (std::size_t i = 0; i < files.size(); ++i)
     {
-        if (!Upload::save_file(location->upload_path, files[i].filename,
-                               files[i].content))
+        int saved_error = 0;
+        if (!Upload::save_file(location->upload_path,files[i].filename,files[i].content,saved_error))
         {
-            const int saved_error = errno;
             bool cleaned = true;
 
             for (std::size_t j = 0; j < i; ++j)
@@ -640,8 +778,6 @@ void Server::handle_delete(const HttpRequest &request, const ServerConfig &conf,
 }
 
 
-// Builds status line + headers for a status string ("404 Not Found") and a body.
-// The caller appends the body itself. Header generation lives in HttpResponse.
 std::string Server::create_response_data(const HttpRequest &request, std::string &status, std::string &body)
 {
     return HttpResponse::from_status_line(status, body).build_head(request.version);
@@ -649,8 +785,6 @@ std::string Server::create_response_data(const HttpRequest &request, std::string
 
 namespace
 {
-    // POST / DELETE handlers report "<status line>" + body. Success responses
-    // are sent as they are; 4xx/5xx ones get the configured (or built-in) error page.
     std::string trim_cgi(const std::string &value)
     {
         std::string::size_type first =
@@ -695,28 +829,8 @@ namespace
         return true;
     }
 
-    bool build_cgi_http_response(
-        const std::string &output,
-        const std::string &version,
-        std::string &response_data)
+    bool build_cgi_response_headers(const std::string &header_block,const std::string &version,std::string &response_head,bool &body_allowed)
     {
-        std::string::size_type separator =
-            output.find("\r\n\r\n");
-
-        std::size_t separator_size = 4;
-
-        if (separator == std::string::npos)
-        {
-            separator = output.find("\n\n");
-            separator_size = 2;
-        }
-
-        if (separator == std::string::npos)
-            return false;
-
-        std::string header_block = output.substr(0, separator);
-        std::string body = output.substr(separator + separator_size);
-
         HttpResponse response(200);
 
         std::string content_type;
@@ -758,9 +872,7 @@ namespace
                 if (status_found || value.size() < 3)
                     return false;
 
-                if (!std::isdigit(static_cast<unsigned char>(value[0])) ||
-                    !std::isdigit(static_cast<unsigned char>(value[1])) ||
-                    !std::isdigit(static_cast<unsigned char>(value[2])))
+                if (!std::isdigit(static_cast<unsigned char>(value[0])) || !std::isdigit(static_cast<unsigned char>(value[1])) || !std::isdigit(static_cast<unsigned char>(value[2])))
                     return false;
 
                 if (value.size() > 3 &&
@@ -791,17 +903,13 @@ namespace
             }
             else if (name == "location")
             {
-                if (value.empty())
+                if (location_found || value.empty())
                     return false;
 
                 response.set_header("Location", value);
                 location_found = true;
             }
-            else if (name != "content-length" &&
-                     name != "connection" &&
-                     name != "transfer-encoding" &&
-                     name != "date" &&
-                     name != "server")
+            else if (name != "content-length" &&name != "connection" && name != "transfer-encoding" && name != "date" && name != "server")
             {
                 response.set_header(name, value);
             }
@@ -821,11 +929,16 @@ namespace
         if (content_type.empty())
             content_type = "text/plain; charset=UTF-8";
 
-        response.set_body(body, content_type);
-        response_data = response.build(version);
+        response.set_header("Content-Type", content_type);
+
+        body_allowed = !HttpResponse::status_has_no_body(response.get_status());
+
+        response_head = response.build_head_streaming(version);
 
         return true;
     }
+
+
     HttpResponse finish_handler_response(const StaticFileHandler &files, const std::string &status, const std::string &body)
     {
         HttpResponse response = HttpResponse::from_status_line(status, body);
@@ -836,7 +949,7 @@ namespace
     }
 }
 
-std::string Server::build_response(ClientConnection &client, const HttpRequest &request, const ServerConfig &conf)
+std::string Server::build_response(ClientConnection &client,HttpRequest &request,const ServerConfig &conf)
 {
     const Router router(conf);
     const StaticFileHandler files(conf, router);
@@ -867,11 +980,8 @@ std::string Server::build_response(ClientConnection &client, const HttpRequest &
 
         case ROUTE_OK:
         {
-            HttpRequest routed = request;
             std::string status;
             std::string body;
-
-            routed.path = route.uri;
 
             if (request.method == "POST")
             {
@@ -880,14 +990,16 @@ std::string Server::build_response(ClientConnection &client, const HttpRequest &
 
                 if (cgi_config != NULL)
                 {
+                    request.path = route.uri;
+
                     std::string error_status;
 
                     if (start_cgi(
                             client,
-                            routed,
+                            request,
                             route.fs_path,
                             cgi_config->interpreter,
-                            routed.path,
+                            request.path,
                             error_status))
                     {
                         return "";
@@ -903,8 +1015,13 @@ std::string Server::build_response(ClientConnection &client, const HttpRequest &
                 }
             }
 
+            HttpRequest routed = request;
+            routed.path = route.uri;
+
             if (request.method == "GET")
+            {
                 response = files.handle_get(routed, route);
+            }
             else if (request.method == "POST")
             {
                 handle_post(routed, conf, status, body);
@@ -1030,52 +1147,35 @@ void Server::parse_and_respond(ClientConnection &client, HttpParser &http_parser
         client.request_complete = true;
         client.response_ready = true;
     }
+    std::string().swap(client.request_buffer);
 }
-
-bool Server::read_client_data(ClientConnection &client, bool &stop_processing)
+bool Server::read_client_data(ClientConnection &client,bool &stop_processing)
 {
     const std::size_t MAX_HEADER_SIZE = 32 * 1024;
-    const std::size_t MAX_READ_PER_EVENT = 1024 * 1024;
 
     char buffer[64 * 1024];
-    std::size_t total_read = 0;
 
     stop_processing = false;
 
-    while (total_read < MAX_READ_PER_EVENT)
+    ssize_t bytes_read = recv(
+        client.fd,
+        buffer,
+        sizeof(buffer),
+        0
+    );
+
+    if (bytes_read <= 0)
+        return false;
+
+    client.last_activity = time(NULL);
+
+    client.request_buffer.append(
+        buffer,
+        static_cast<std::size_t>(bytes_read)
+    );
+
+    if (!client.cgi_input_streaming)
     {
-        std::size_t bytes_to_read = sizeof(buffer);
-        std::size_t remaining = MAX_READ_PER_EVENT - total_read;
-
-        if (bytes_to_read > remaining)
-            bytes_to_read = remaining;
-
-        ssize_t bytes_read = recv(
-            client.fd,
-            buffer,
-            bytes_to_read,
-            0
-        );
-
-        if (bytes_read == 0)
-        {
-            if (total_read == 0)
-                return false;
-            break;
-        }
-
-        if (bytes_read < 0)
-            break;
-
-        client.last_activity = time(NULL);
-
-        client.request_buffer.append(
-            buffer,
-            static_cast<std::size_t>(bytes_read)
-        );
-
-        total_read += static_cast<std::size_t>(bytes_read);
-
         std::string::size_type header_end =
             client.request_buffer.find("\r\n\r\n");
 
@@ -1190,49 +1290,90 @@ void Server::handle_large_header(ClientConnection &client)
     client.request_complete = true;
     client.response_ready = true;
 }
-
-bool Server::handle_client_event(ClientConnection &client, HttpParser &http_parser)
+bool Server::handle_client_event(ClientConnection &client,HttpParser &http_parser)
 {
+    if (client.cgi_input_streaming)
+    {
+        bool stop_processing = false;
+
+        if (!read_client_data(client, stop_processing))
+            return false;
+
+        CgiHandler *cgi = find_cgi_handler(client.fd);
+
+        if (cgi == NULL)
+            return false;
+
+        if (!pump_cgi_input(client, *cgi))
+            return false;
+
+        return true;
+    }
+
     bool stop_processing = false;
+
     if (!read_client_data(client, stop_processing))
         return false;
+
     if (client.header_too_large)
     {
         handle_large_header(client);
         return true;
     }
+
     if (stop_processing)
         return true;
 
-    std::string::size_type header_end = client.request_buffer.find("\r\n\r\n");
+    std::string::size_type header_end =
+        client.request_buffer.find("\r\n\r\n");
+
     if (header_end == std::string::npos)
-        return true; 
+        return true;
+
     const ServerConfig &conf = get_server_config(client);
 
-    std::string headers_part = client.request_buffer.substr(0, header_end);
-    std::string::size_type body_start = header_end + 4;
+    std::string headers_part =
+        client.request_buffer.substr(0, header_end);
 
-    const std::size_t max_body_size = get_request_body_limit(headers_part, conf);
+    const std::string::size_type body_start = header_end + 4;
+
+    const std::size_t max_body_size =
+        get_request_body_limit(headers_part, conf);
 
     bool chunked = false;
     std::size_t content_length = 0;
-    if (!HttpParser::get_body_framing(headers_part, chunked, content_length))
+
+    if (!HttpParser::get_body_framing(
+            headers_part,
+            chunked,
+            content_length))
     {
         HttpRequest dummy_req;
         dummy_req.version = "HTTP/1.1";
+
         std::string status = "400 Bad Request";
         std::string body = status + "\n";
-        client.response_buffer = create_response_data(dummy_req, status, body) + body;
+
+        client.response_buffer =
+            create_response_data(dummy_req, status, body) + body;
+
         client.request_complete = true;
         client.response_ready = true;
+
         return true;
     }
 
+    // Keep the existing buffered handling for chunked requests.
     if (chunked)
     {
         std::string decoded_body;
 
-    ChunkedStatus chunked_status = HttpParser::unchunk_body(client.request_buffer.substr(body_start),decoded_body,max_body_size);
+        ChunkedStatus chunked_status =
+            HttpParser::unchunk_body(
+                client.request_buffer.substr(body_start),
+                decoded_body,
+                max_body_size
+            );
 
         if (chunked_status == CHUNKED_INCOMPLETE)
             return true;
@@ -1242,6 +1383,7 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
             parse_and_respond(client, http_parser, conf);
             return true;
         }
+
         if (chunked_status == CHUNKED_TOO_LARGE)
         {
             HttpRequest dummy_req;
@@ -1255,17 +1397,153 @@ bool Server::handle_client_event(ClientConnection &client, HttpParser &http_pars
 
             client.request_complete = true;
             client.response_ready = true;
+
             return true;
         }
 
-        if (check_max_body_size(client, decoded_body.size(), max_body_size))
+        if (check_max_body_size(
+                client,
+                decoded_body.size(),
+                max_body_size))
+        {
             return true;
+        }
     }
     else
     {
-        if (check_max_body_size(client, content_length, max_body_size))
+        if (check_max_body_size(
+                client,
+                content_length,
+                max_body_size))
+        {
             return true;
+        }
 
+        // Parse request headers without waiting for the complete body.
+        HttpRequest request;
+        bool parsed_chunked = false;
+        std::size_t parsed_content_length = 0;
+
+        try
+        {
+            request = http_parser.parse_headers(
+                headers_part,
+                parsed_chunked,
+                parsed_content_length
+            );
+        }
+        catch (const std::exception &e)
+        {
+            HttpRequest dummy_req;
+            dummy_req.version = "HTTP/1.1";
+
+            std::string error_message = e.what();
+            std::string status = "400 Bad Request";
+
+            if (error_message.size() >= 3 &&
+                std::isdigit(static_cast<unsigned char>(error_message[0])) &&
+                std::isdigit(static_cast<unsigned char>(error_message[1])) &&
+                std::isdigit(static_cast<unsigned char>(error_message[2])))
+            {
+                status = error_message;
+            }
+
+            std::string body = status + "\n";
+
+            client.response_buffer =
+                create_response_data(dummy_req, status, body) + body;
+
+            client.request_complete = true;
+            client.response_ready = true;
+
+            std::string().swap(client.request_buffer);
+
+            return true;
+        }
+
+        if (parsed_chunked != chunked ||
+            parsed_content_length != content_length)
+        {
+            HttpRequest dummy_req;
+            dummy_req.version = "HTTP/1.1";
+
+            std::string status = "400 Bad Request";
+            std::string body = status + "\n";
+
+            client.response_buffer =
+                create_response_data(dummy_req, status, body) + body;
+
+            client.request_complete = true;
+            client.response_ready = true;
+
+            return true;
+        }
+
+        // Start CGI immediately after receiving valid headers.
+        if (request.method == "POST")
+        {
+            const Router router(conf);
+            const RouteResult route = router.route(request);
+
+            if (route.status == ROUTE_OK)
+            {
+                const CgiConfig *cgi_config =
+                    find_cgi_config(route.uri, route.location);
+
+                if (cgi_config != NULL)
+                {
+                    request.path = route.uri;
+
+                    std::string error_status;
+
+                    if (!start_cgi(
+                            client,
+                            request,
+                            route.fs_path,
+                            cgi_config->interpreter,
+                            request.path,
+                            error_status,
+                            true))
+                    {
+                        int error_code = std::atoi(error_status.c_str());
+
+                        if (error_code < 400 || error_code > 599)
+                            error_code = 500;
+
+                        const StaticFileHandler files(conf, router);
+
+                        client.response_buffer =
+                            files.make_error(error_code).build(request.version);
+
+                        client.request_complete = true;
+                        client.response_ready = true;
+
+                        std::string().swap(client.request_buffer);
+
+                        return true;
+                    }
+
+                    // Remove HTTP headers; retain any body bytes already received.
+                    client.request_buffer.erase(0, body_start);
+
+                    client.request_content_length = content_length;
+                    client.request_body_received = 0;
+
+                    CgiHandler *cgi = find_cgi_handler(client.fd);
+
+                    if (cgi == NULL)
+                        return false;
+
+                    // Immediately forward the body bytes already buffered.
+                    if (!pump_cgi_input(client, *cgi))
+                        return false;
+
+                    return true;
+                }
+            }
+        }
+
+        // Non-CGI requests still wait for the complete Content-Length body.
         if (client.request_buffer.size() - body_start < content_length)
             return true;
     }
@@ -1291,16 +1569,23 @@ const ServerConfig &Server::get_server_config(const ClientConnection &client) co
 bool Server::handle_client_write(ClientConnection &client)
 {
     if (client.sent_bytes >= client.response_buffer.size())
+    {
+        if (client.cgi_pending)
+        {
+            std::string().swap(client.response_buffer);
+            client.sent_bytes = 0;
+            return true;
+        }
+
+        if (client.cgi_streaming && client.cgi_stream_finished)
+            return false;
+
         return false;
+    }
 
-    ssize_t bytes_sent = send(client.fd, client.response_buffer.c_str() + client.sent_bytes,
-        client.response_buffer.size() - client.sent_bytes,
-        0);
+    ssize_t bytes_sent = send(client.fd,client.response_buffer.c_str() + client.sent_bytes,client.response_buffer.size() - client.sent_bytes,0);
 
-    if (bytes_sent < 0)
-        return false;
-
-    if (bytes_sent == 0)
+    if (bytes_sent <= 0)
         return false;
 
     client.sent_bytes += static_cast<std::size_t>(bytes_sent);
@@ -1308,14 +1593,28 @@ bool Server::handle_client_write(ClientConnection &client)
 
     if (client.sent_bytes < client.response_buffer.size())
         return true;
-    // std::cout << "Response fully sent to client FD: " << client.fd << std::endl;
 
-    bool close_connection =(client.response_buffer.find("Connection: close") != std::string::npos);
+    if (client.cgi_pending)
+    {
+        std::string().swap(client.response_buffer);
+        client.sent_bytes = 0;
+        return true;
+    }
+
+    if (client.cgi_streaming && client.cgi_stream_finished)
+        return false;
+
+    bool close_connection =
+        client.response_buffer.find("Connection: close") != std::string::npos;
+
     if (close_connection)
         return false;
+
     client.reset();
     return true;
-}  
+}
+
+
 
 const ServerConfig *Server::find_server_config(const std::string &host) const
 {
@@ -1352,6 +1651,7 @@ std::vector<struct pollfd> Server::build_poll_fds(const std::vector<ClientConnec
 {
     std::vector<struct pollfd> fds;
 
+    // 1. Listening sockets
     for (std::size_t i = 0; i < _server_fds.size(); ++i)
     {
         struct pollfd server_poll;
@@ -1363,23 +1663,55 @@ std::vector<struct pollfd> Server::build_poll_fds(const std::vector<ClientConnec
         fds.push_back(server_poll);
     }
 
+    // 2. Client sockets
     for (std::size_t i = 0; i < clients.size(); ++i)
     {
         struct pollfd client_poll;
 
         client_poll.fd = clients[i].fd;
+        client_poll.events = 0;
+        client_poll.revents = 0;
 
         if (clients[i].cgi_pending)
-            client_poll.events = 0;
-        else if (clients[i].response_ready)
-            client_poll.events = POLLOUT;
-        else
-            client_poll.events = POLLIN;
+        {
+            // Send pending CGI response data to the client.
+            if (clients[i].sent_bytes <
+                clients[i].response_buffer.size())
+            {
+                client_poll.events |= POLLOUT;
+            }
 
-        client_poll.revents = 0;
+            // Read more request data only when the CGI input queue
+            // has free space and no buffered bytes are waiting.
+            if (clients[i].cgi_input_streaming &&
+                clients[i].request_buffer.empty() &&
+                clients[i].request_body_received <
+                    clients[i].request_content_length)
+            {
+                CgiHandler *cgi =
+                    find_cgi_handler(clients[i].fd);
+
+                if (cgi != NULL &&
+                    cgi->get_stdin_fd() != -1 &&
+                    cgi->stdin_buffer_space() > 0)
+                {
+                    client_poll.events |= POLLIN;
+                }
+            }
+        }
+        else if (clients[i].response_ready)
+        {
+            client_poll.events = POLLOUT;
+        }
+        else
+        {
+            client_poll.events = POLLIN;
+        }
 
         fds.push_back(client_poll);
     }
+
+    // 3. CGI pipes
     for (std::size_t i = 0; i < _cgi_processes.size(); ++i)
     {
         CgiHandler *cgi = _cgi_processes[i];
@@ -1393,30 +1725,58 @@ std::vector<struct pollfd> Server::build_poll_fds(const std::vector<ClientConnec
             stdout_fd = cgi->get_stdout_fd();
         }
 
+        // CGI stdin: wait for POLLOUT only when data is pending.
         struct pollfd input_poll;
 
         input_poll.fd = stdin_fd;
         input_poll.events = 0;
         input_poll.revents = 0;
 
-        if (stdin_fd != -1)
+        if (cgi != NULL &&
+            stdin_fd != -1 &&
+            cgi->pending_stdin_bytes() > 0)
+        {
             input_poll.events = POLLOUT;
+        }
 
         fds.push_back(input_poll);
 
+        // CGI stdout: read only when the client can accept more data.
         struct pollfd output_poll;
 
         output_poll.fd = stdout_fd;
         output_poll.events = 0;
         output_poll.revents = 0;
 
-        if (stdout_fd != -1)
-            output_poll.events = POLLIN;
+        if (cgi != NULL && stdout_fd != -1)
+        {
+            std::vector<ClientConnection>::const_iterator client_it =
+                clients.begin();
+
+            while (client_it != clients.end() &&
+                   client_it->fd != cgi->get_client_fd())
+            {
+                ++client_it;
+            }
+
+            if (client_it != clients.end())
+            {
+                if (!client_it->cgi_headers_prepared ||
+                    !client_it->cgi_body_allowed ||
+                    client_it->response_buffer.empty())
+                {
+                    output_poll.events = POLLIN;
+                }
+            }
+        }
 
         fds.push_back(output_poll);
     }
+
     return fds;
 }
+
+
 
 
 
@@ -1433,12 +1793,8 @@ void Server::accept_ready_connections(const std::vector<struct pollfd> &fds, std
             int client_fd = accept_connection(_server_fds[i]);
 
             if (client_fd != -1)
-            {
-                // std::cout << "Accepted client: " << client_fd << std::endl;
                 clients.push_back(ClientConnection(client_fd, i));
-            }
         }
-
         if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL))
         {
             std::cerr << "Error: Listening socket FD " << _server_fds[i]
@@ -1511,33 +1867,38 @@ void Server::process_client_events(const std::vector<struct pollfd> &fds,std::ve
 }
 
 
-void Server::check_timeouts(std::vector<ClientConnection> &clients, time_t timeout_seconds)
+void Server::check_timeouts(std::vector<ClientConnection> &clients,time_t timeout_seconds)
 {
     time_t current_time = time(NULL);
-    for(std::size_t i = 0; i < clients.size(); )
+
+    for (std::size_t i = 0; i < clients.size();)
     {
-        if(current_time - clients[i].last_activity > timeout_seconds)
+        if (current_time - clients[i].last_activity > timeout_seconds)
         {
-            std::cout << "Client FD " << clients[i].fd << " timed out. Closing connection." << std::endl;
-            close(clients[i].fd);
-            clients.erase(clients.begin() + i);
+            int client_fd = clients[i].fd;
+
+            std::cout << "Client FD " << client_fd
+                      << " timed out. Closing connection."
+                      << std::endl;
+
+            remove_client(client_fd, clients);
         }
         else
+        {
             ++i;
+        }
     }
 }
 
-
 void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vector<ClientConnection> &clients,std::size_t polled_client_count,std::size_t polled_cgi_count)
 {
-    const std::size_t cgi_base =
-        _server_fds.size() + polled_client_count;
+    const std::size_t cgi_base = _server_fds.size() + polled_client_count;
+
+    const std::size_t MAX_CGI_HEADER_SIZE = 32 * 1024;
 
     std::vector<CgiHandler *> finished_cgi;
 
-    for (std::size_t i = 0;
-         i < polled_cgi_count && i < _cgi_processes.size();
-         ++i)
+    for (std::size_t i = 0;i < polled_cgi_count && i < _cgi_processes.size();++i)
     {
         const std::size_t input_index = cgi_base + i * 2;
         const std::size_t output_index = input_index + 1;
@@ -1550,7 +1911,6 @@ void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vecto
         if (cgi == NULL)
             continue;
 
-        // Find the client that started this CGI process.
         std::vector<ClientConnection>::iterator client_it =
             clients.begin();
 
@@ -1570,9 +1930,9 @@ void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vecto
 
         if (client_exists && client_it->cgi_pending)
         {
-            // Handle CGI stdin.
             short input_events = fds[input_index].revents;
-        
+
+
             if (cgi->get_stdin_fd() != -1)
             {
                 if (input_events & POLLNVAL)
@@ -1587,90 +1947,208 @@ void Server::process_cgi_events(const std::vector<struct pollfd> &fds,std::vecto
                         client_it->last_activity = time(NULL);
                 }
             }
-        
-            // Handle CGI stdout.
+
+            // Transfer more buffered request data whenever space is available.
+            if (io_ok &&
+                client_it->cgi_input_streaming &&
+                cgi->get_stdin_fd() != -1)
+            {
+                if (!pump_cgi_input(*client_it, *cgi))
+                    io_ok = false;
+            }
+
             short output_events = fds[output_index].revents;
-        
+
+            bool can_read_output = !client_it->cgi_headers_prepared || !client_it->cgi_body_allowed || client_it->response_buffer.empty();
+
             if (cgi->get_stdout_fd() != -1)
             {
                 if (output_events & (POLLNVAL | POLLERR))
                     io_ok = false;
-                else if (output_events & POLLIN)
+                else if (can_read_output &&(output_events & (POLLIN | POLLHUP)))
                 {
-                    if (!cgi->handle_stdout_read(error_status))
+                    std::string chunk;
+
+                    if (!cgi->read_stdout_chunk(chunk, error_status))
                         io_ok = false;
-                    else
-                        client_it->last_activity = time(NULL);
+                    else if (!chunk.empty())
+                    {
+                        if (!client_it->cgi_headers_prepared)
+                        {
+                            client_it->cgi_header_buffer.append(chunk);
+
+                            std::string::size_type separator =
+                                client_it->cgi_header_buffer.find(
+                                    "\r\n\r\n"
+                                );
+
+                            std::size_t separator_size = 4;
+
+                            if (separator == std::string::npos)
+                            {
+                                separator =
+                                    client_it->cgi_header_buffer.find("\n\n");
+                                separator_size = 2;
+                            }
+
+                            if (separator == std::string::npos)
+                            {
+                                if (client_it->cgi_header_buffer.size() >
+                                    MAX_CGI_HEADER_SIZE)
+                                    io_ok = false;
+                            }
+                            else if (separator > MAX_CGI_HEADER_SIZE || separator_size > MAX_CGI_HEADER_SIZE - separator)
+                                io_ok = false;
+                            else
+                            {
+                                std::string header_block =
+                                    client_it->cgi_header_buffer.substr(
+                                        0, separator
+                                    );
+
+                                std::string response_head;
+                                bool body_allowed = true;
+
+                                if (!build_cgi_response_headers(header_block,cgi->get_http_version(),response_head,body_allowed))
+                                {
+                                    io_ok = false;
+                                }
+                                else
+                                {
+                                    const std::string::size_type body_start =
+                                        separator + separator_size;
+
+                                    client_it->response_buffer.swap(
+                                        response_head
+                                    );
+
+                                    client_it->sent_bytes = 0;
+                                    client_it->cgi_body_allowed = body_allowed;
+                                    client_it->cgi_headers_prepared = true;
+                                    client_it->cgi_streaming = true;
+
+                                    if (body_allowed &&
+                                        body_start <
+                                            client_it->cgi_header_buffer.size())
+                                    {
+                                        client_it->response_buffer.append(
+                                            client_it->cgi_header_buffer,
+                                            body_start,
+                                            std::string::npos
+                                        );
+                                    }
+
+                                    client_it->response_ready = true;
+
+                                    std::string().swap(
+                                        client_it->cgi_header_buffer
+                                    );
+
+                                    client_it->last_activity = time(NULL);
+                                }
+                            }
+                        }
+                        else if (client_it->cgi_body_allowed)
+                        {
+                            client_it->response_buffer.swap(chunk);
+                            client_it->sent_bytes = 0;
+                            client_it->response_ready = true;
+                            client_it->last_activity = time(NULL);
+                        }
+                    }
                 }
-                else if (output_events & POLLHUP)
-                    cgi->close_stdout();
             }
         }
 
-        // Check whether the child process has exited.
+        
         if (!cgi->check_child(error_status))
             io_ok = false;
+        
+        if (client_exists &&
+            client_it->cgi_input_streaming &&
+            cgi->get_stdin_fd() == -1)
+        {
+            client_it->cgi_input_streaming = false;
+            client_it->request_complete = true;
+        
+            std::string().swap(client_it->request_buffer);
+        }
 
-        // A pipe or child-process error produces 502.
         if (!io_ok && client_exists && client_it->cgi_pending)
         {
             cgi->terminate();
 
-            const ServerConfig &conf = get_server_config(*client_it);
-            const Router router(conf);
-            const StaticFileHandler files(conf, router);
+            if (!client_it->cgi_streaming)
+            {
+                const ServerConfig &conf = get_server_config(*client_it);
 
-            client_it->response_buffer =
-                files.make_error(502).build(cgi->get_http_version());
+                const Router router(conf);
+                const StaticFileHandler files(conf, router);
 
-            client_it->cgi_pending = false;
-            client_it->response_ready = true;
+                client_it->response_buffer = files.make_error(502).build(cgi->get_http_version());
+
+                std::string().swap(client_it->cgi_header_buffer);
+
+                client_it->cgi_pending = false;
+                client_it->response_ready = true;
+            }
+            else
+            {
+                client_it->cgi_pending = false;
+                client_it->cgi_stream_finished = true;
+                client_it->response_ready = true;
+            }
+
             client_it->last_activity = time(NULL);
         }
 
-        // CGI is complete only after child exit and both pipes close.
         if (cgi->is_finished())
         {
             if (client_exists && client_it->cgi_pending)
             {
-                std::string cgi_response;
-
-                if (cgi->was_successful() &&
-                    build_cgi_http_response(
-                        cgi->get_output(),
-                        cgi->get_http_version(),
-                        cgi_response))
+                if (!cgi->was_successful() ||
+                    !client_it->cgi_headers_prepared)
                 {
-                    client_it->response_buffer = cgi_response;
+                    if (!client_it->cgi_streaming)
+                    {
+                        const ServerConfig &conf =
+                            get_server_config(*client_it);
+
+                        const Router router(conf);
+                        const StaticFileHandler files(conf, router);
+
+                        client_it->response_buffer =
+                            files.make_error(502).build(
+                                cgi->get_http_version()
+                            );
+
+                        std::string().swap(
+                            client_it->cgi_header_buffer
+                        );
+                    }
+
+                    client_it->cgi_pending = false;
+                    client_it->response_ready = true;
+
+                    if (client_it->cgi_streaming)
+                        client_it->cgi_stream_finished = true;
                 }
                 else
                 {
-                    const ServerConfig &conf =
-                        get_server_config(*client_it);
-
-                    const Router router(conf);
-                    const StaticFileHandler files(conf, router);
-
-                    client_it->response_buffer =
-                        files.make_error(502).build(cgi->get_http_version());
+                    client_it->cgi_pending = false;
+                    client_it->cgi_stream_finished = true;
+                    client_it->response_ready = true;
                 }
 
-                client_it->cgi_pending = false;
-                client_it->response_ready = true;
                 client_it->last_activity = time(NULL);
             }
 
             finished_cgi.push_back(cgi);
         }
     }
-
-    // Remove completed CGI handlers after processing the original poll array.
     for (std::size_t i = 0; i < finished_cgi.size(); ++i)
     {
-        for (std::vector<CgiHandler *>::iterator it =
-                 _cgi_processes.begin();
-             it != _cgi_processes.end();
-             ++it)
+        for (std::vector<CgiHandler *>::iterator it =  _cgi_processes.begin(); it != _cgi_processes.end();++it)
         {
             if (*it == finished_cgi[i])
             {
@@ -1738,20 +2216,9 @@ void Server::run(HttpParser &parser)
         {
             accept_ready_connections(fds, clients);
 
-            process_client_events(
-                fds,
-                clients,
-                parser,
-                polled_client_count
-            );
+            process_client_events(fds,clients,parser,polled_client_count);
         }
-
-        process_cgi_events(
-            fds,
-            clients,
-            polled_client_count,
-            polled_cgi_count
-        );
+        process_cgi_events(fds,clients,polled_client_count,polled_cgi_count);
     }
 }
 

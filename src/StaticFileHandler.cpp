@@ -237,14 +237,19 @@ HttpResponse StaticFileHandler::serve_directory(const HttpRequest &request, cons
             index_path += '/';
         index_path += index;
         const int result = stat(index_path.c_str(), &info);
-        const int error_number = errno;
 
         if (result == 0 && S_ISREG(info.st_mode))
             return serve_file(index_path);
-        if (result != 0 && error_number == EACCES)
-            return make_error(403);
-    }
 
+        if (result != 0)
+        {
+            const int error_number = errno;
+        
+            if (error_number == EACCES)
+                return make_error(403);
+        }
+    }
+        
     if (route.location != NULL && route.location->autoindex)
         return build_autoindex(route.fs_path, route.uri);
     return make_error(404);

@@ -231,71 +231,109 @@ bool HttpParser::get_body_framing(const std::string &headers_part,
     return !(has_length && has_encoding);
 }
 
-HttpRequest HttpParser::parse(const std::string &raw_request)
+
+HttpRequest HttpParser::parse_headers(const std::string &header_block,bool &chunked,std::size_t &content_length)
 {
     HttpRequest request;
-    std::istringstream stream(raw_request);
+
+    std::istringstream stream(header_block);
     std::string line;
     std::string extra;
     bool host_found = false;
 
-    // std::cout << "line ->" << raw_request << std::endl;
     if (!std::getline(stream, line))
         throw std::runtime_error("Missing request line");
+
     if (!line.empty() && line[line.size() - 1] == '\r')
         line.erase(line.size() - 1);
+
     std::istringstream request_line(line);
+
     if (!(request_line >> request.method >> request.path >> request.version))
         throw std::runtime_error("Invalid HTTP request line");
-    
+
     std::string::size_type query_pos = request.path.find('?');
+
     if (query_pos != std::string::npos)
     {
         request.query_string = request.path.substr(query_pos + 1);
         request.path = request.path.substr(0, query_pos);
     }
+
     if (request.path.size() > 2048)
         throw std::runtime_error("414 URI Too Long");
+
     if (request_line >> extra)
         throw std::runtime_error("Invalid HTTP request line");
-    if (request.version != "HTTP/1.0" && request.version != "HTTP/1.1")
+
+    if (request.version != "HTTP/1.0" &&
+        request.version != "HTTP/1.1")
         throw std::runtime_error("Unsupported HTTP version");
+
     if (request.path.empty() || request.path[0] != '/')
         throw std::runtime_error("Invalid request path");
+
     while (std::getline(stream, line))
     {
         if (!line.empty() && line[line.size() - 1] == '\r')
             line.erase(line.size() - 1);
+
         if (line.empty())
             break;
+
         if (line[0] == ' ' || line[0] == '\t')
             throw std::runtime_error("Invalid HTTP header");
+
         parse_head(line, request, host_found);
     }
+
     if (request.version == "HTTP/1.1" && !host_found)
         throw std::runtime_error("Missing Host header");
-    const std::string::size_type body_pos = raw_request.find("\r\n\r\n");
+
+    if (!get_body_framing(header_block, chunked, content_length))
+        throw std::runtime_error("Invalid HTTP body framing");
+
+    return request;
+}
+
+HttpRequest HttpParser::parse(const std::string &raw_request)
+{
+    const std::string::size_type body_pos =
+        raw_request.find("\r\n\r\n");
+
     if (body_pos == std::string::npos)
         throw std::runtime_error("Incomplete HTTP headers");
+
+    const std::string header_block =
+        raw_request.substr(0, body_pos);
+
     bool chunked = false;
     std::size_t content_length = 0;
-    if (!get_body_framing(raw_request.substr(0, body_pos), chunked, content_length))
-        throw std::runtime_error("Invalid HTTP body framing");
+
+    HttpRequest request =
+        parse_headers(header_block, chunked, content_length);
+
     const std::size_t body_start = body_pos + 4;
+
     if (chunked)
     {
         std::string decoded_body;
+
         const ChunkedStatus status =
             unchunk_body(raw_request.substr(body_start), decoded_body);
+
         if (status != CHUNKED_COMPLETE)
             throw std::runtime_error("Invalid or incomplete chunked body");
+
         request.body.swap(decoded_body);
     }
     else
     {
         if (raw_request.size() - body_start < content_length)
             throw std::runtime_error("Incomplete HTTP body");
-        request.body = raw_request.substr(body_start, content_length);
+
+        request.body.assign(raw_request, body_start, content_length);
     }
+
     return request;
 }

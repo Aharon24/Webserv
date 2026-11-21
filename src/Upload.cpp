@@ -470,10 +470,7 @@ namespace
                 count = max_write;
             ssize_t written = write(fd, content.c_str() + offset, count);
             if (written <= 0)
-            {
-                errno = EIO;
                 return false;
-            }
             offset += static_cast<std::string::size_type>(written);
         }
         return true;
@@ -482,41 +479,59 @@ namespace
 
 // Saves a file to the specified directory, rejecting unsafe filenames and existing files.
 // On failure, returns false and sets errno. Existing files are preserved.
-bool Upload::save_file(const std::string &directory,
-                       const std::string &filename,
-                       const std::string &content)
+bool Upload::save_file(const std::string &directory,const std::string &filename,const std::string &content,int &error_code)
 {
+    error_code = 0;
+
     if (!valid_filename(filename))
     {
-        errno = EINVAL;
+        error_code = EINVAL;
         return false;
     }
+
     if (!valid_directory(directory))
+    {
+        error_code = errno;
         return false;
+    }
 
     std::string path = directory;
+
     if (path[path.size() - 1] != '/')
         path += '/';
+
     path += filename;
 
     int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+
     if (fd == -1)
+    {
+        error_code = errno;
         return false;
+    }
+
     if (!write_content(fd, content))
     {
-        const int error = EIO;
         close(fd);
-        const bool cleaned = std::remove(path.c_str()) == 0;
-        errno = cleaned ? error : EIO;
+
+        if (std::remove(path.c_str()) != 0)
+            error_code = EIO;
+        else
+            error_code = EIO;
+
         return false;
     }
+
     if (close(fd) == -1)
     {
-        const int error = errno;
-        const bool cleaned = std::remove(path.c_str()) == 0;
-        errno = cleaned ? error : EIO;
+        error_code = errno;
+
+        if (std::remove(path.c_str()) != 0)
+            error_code = EIO;
+
         return false;
     }
+
     return true;
 }
 

@@ -21,9 +21,13 @@ private:
     std::map<std::string, std::string> _headers;
     std::string _body;
 
+    std::string build_head_internal(const std::string &version,std::size_t body_size,bool include_content_length) const;
+
 public:
     HttpResponse();
     explicit HttpResponse(int status);
+
+    std::string build_head_streaming(const std::string &version) const;
 
     // Status
     void set_status(int status);
@@ -41,7 +45,9 @@ public:
     // Serialization.
     // build_head(): status line + headers + empty line (no body).
     // build():      build_head() + body (body is omitted for 1xx/204/304).
+
     std::string build_head(const std::string &version) const;
+    std::string build_head(const std::string &version,std::size_t body_size) const;
     std::string build(const std::string &version) const;
 
     // Static helpers

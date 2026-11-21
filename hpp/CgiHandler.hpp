@@ -8,11 +8,13 @@
 #include <sys/types.h>
 #include "HttpRequest.hpp"
 #include <limits.h>
+#include <vector>
 
 class CgiHandler
 {
 private:
-    HttpRequest _request;
+    std::string _http_version;
+    std::vector<std::string> _environment;
 
     std::string _script_path;
     std::string _interpreter_path;
@@ -22,6 +24,7 @@ private:
     std::string _output_buffer;
 
     std::size_t _input_offset;
+    bool _input_complete;
 
     pid_t _pid;
 
@@ -40,13 +43,7 @@ private:
     CgiHandler &operator=(const CgiHandler &other);
 
 public:
-    CgiHandler(
-        int client_fd,
-        const HttpRequest &request,
-        const std::string &script_path,
-        const std::string &interpreter_path,
-        const std::string &path_info
-    );
+    CgiHandler(int client_fd,HttpRequest &request,const std::string &script_path,const std::string &interpreter_path, const std::string &path_info);
 
     ~CgiHandler();
 
@@ -64,11 +61,21 @@ public:
 
     bool handle_stdin_write(std::string &error_status);
     bool handle_stdout_read(std::string &error_status);
+    bool read_stdout_chunk(std::string &chunk,std::string &error_status);
+
+
+
+    void enable_streaming_input();
+    bool append_stdin_data(const char *data, std::size_t size);
+    void finish_stdin_input();
+    std::size_t pending_stdin_bytes() const;
+    std::size_t stdin_buffer_space() const;
 
     bool check_child(std::string &error_status);
 
     bool is_finished() const;
 
+    std::string &get_output();
     const std::string &get_output() const;
 
     void terminate();
