@@ -1,4 +1,4 @@
-*This project has been created as part of the 42 curriculum by Aharon24.*
+*This project has been created as part of the 42 curriculum by ahapetro, aramarak.*
 
 # Webserv
 
@@ -288,6 +288,22 @@ free -h
 ```
 
 A successful compilation does not by itself prove that all runtime tests pass. Run the provided tester and additional tests for concurrent clients, large request bodies, uploads, malformed requests, client disconnects, and CGI failures.
+
+### Basic testing
+
+For a configuration that listens on `127.0.0.1:8080`, example requests are:
+
+```sh
+# Retrieve a resource
+curl -i http://127.0.0.1:8080/
+
+# Send a POST request (the endpoint must allow POST)
+curl -i -X POST --data 'hello' http://127.0.0.1:8080/uploads/
+
+# Delete a file (the endpoint must allow DELETE)
+curl -i -X DELETE http://127.0.0.1:8080/uploads/example.txt
+```
+These are **illustrative commands**, not a guarantee that these exact paths are enabled. The configured routes and allowed HTTP methods determine the results.
 
 ## Resources
 
