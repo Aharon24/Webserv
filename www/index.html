@@ -1,9 +1,523 @@
+
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Webserv test aaaaa</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webserv — HTTP Server</title>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #080b12;
+            --surface: #101622;
+            --border: #202b3b;
+            --text: #e8edf5;
+            --muted: #8492a6;
+            --accent: #7c6cff;
+            --green: #55e6a5;
+        }
+
+        body {
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--text);
+            font-family: "Segoe UI", Arial, sans-serif;
+            line-height: 1.6;
+        }
+
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .container {
+            width: min(1120px, 90%);
+            margin: 0 auto;
+        }
+
+        /* Navigation */
+
+        header {
+            border-bottom: 1px solid var(--border);
+            background: rgba(8, 11, 18, 0.9);
+        }
+
+        nav {
+            height: 76px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 21px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .logo-icon {
+            width: 38px;
+            height: 38px;
+            display: grid;
+            place-items: center;
+            background: linear-gradient(135deg, #8878ff, #5142d9);
+            border-radius: 11px;
+            color: white;
+            font-size: 21px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 30px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .nav-links a:hover {
+            color: white;
+        }
+
+        /* Hero */
+
+        .hero {
+            padding: 110px 0 85px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: "";
+            position: absolute;
+            width: 500px;
+            height: 500px;
+            background: var(--accent);
+            opacity: 0.13;
+            filter: blur(140px);
+            border-radius: 50%;
+            top: -220px;
+            left: 50%;
+            transform: translateX(-50%);
+            pointer-events: none;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 9px;
+            padding: 7px 14px;
+            border: 1px solid #293448;
+            border-radius: 30px;
+            background: #111827;
+            color: #b7c2d4;
+            font-size: 12px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .dot {
+            width: 7px;
+            height: 7px;
+            background: var(--green);
+            border-radius: 50%;
+            box-shadow: 0 0 12px var(--green);
+        }
+
+        h1 {
+            margin-top: 30px;
+            font-size: clamp(42px, 7vw, 76px);
+            line-height: 1.08;
+            letter-spacing: -3px;
+            font-weight: 750;
+        }
+
+        h1 span {
+            background: linear-gradient(100deg, #a99dff, #6e8cff);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .hero p {
+            max-width: 590px;
+            margin: 25px auto 0;
+            color: var(--muted);
+            font-size: 17px;
+        }
+
+        .buttons {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 14px;
+            margin-top: 35px;
+        }
+
+        .button {
+            padding: 13px 23px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            transition: 0.2s;
+        }
+
+        .button-primary {
+            background: var(--accent);
+            color: white;
+            box-shadow: 0 5px 25px #7c6cff35;
+        }
+
+        .button-primary:hover {
+            background: #9387ff;
+            transform: translateY(-2px);
+        }
+
+        .button-secondary {
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text);
+        }
+
+        .button-secondary:hover {
+            border-color: #59657a;
+        }
+
+        /* Server terminal */
+
+        .terminal {
+            max-width: 720px;
+            margin: 0 auto;
+            overflow: hidden;
+            border: 1px solid #283449;
+            border-radius: 14px;
+            background: #0d121c;
+            box-shadow: 0 25px 80px #00000045;
+            text-align: left;
+        }
+
+        .terminal-header {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 15px 18px;
+            border-bottom: 1px solid var(--border);
+            background: #121927;
+        }
+
+        .circle {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+        }
+
+        .red { background: #ff6b6b; }
+        .yellow { background: #ffc857; }
+        .green { background: #55e6a5; }
+
+        .terminal-title {
+            margin-left: 10px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .terminal-body {
+            padding: 24px;
+            font-family: "Consolas", "Courier New", monospace;
+            font-size: 13px;
+            overflow-x: auto;
+        }
+
+        .terminal-line {
+            margin-bottom: 12px;
+            white-space: nowrap;
+        }
+
+        .prompt { color: var(--green); }
+        .command { color: #b7c4ff; }
+        .comment { color: #637188; }
+        .success { color: var(--green); }
+
+        /* Features */
+
+        .features {
+            padding: 70px 0 100px;
+        }
+
+        .section-heading {
+            margin-bottom: 35px;
+            text-align: center;
+        }
+
+        .section-heading h2 {
+            font-size: 30px;
+            letter-spacing: -1px;
+        }
+
+        .section-heading p {
+            margin-top: 10px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 18px;
+        }
+
+        .card {
+            padding: 28px;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: var(--surface);
+            transition: 0.2s;
+        }
+
+        .card:hover {
+            border-color: #48416f;
+            transform: translateY(-4px);
+        }
+
+        .card-icon {
+            width: 45px;
+            height: 45px;
+            display: grid;
+            place-items: center;
+            margin-bottom: 22px;
+            border: 1px solid #343054;
+            border-radius: 12px;
+            background: #1d1a35;
+            color: #a99dff;
+            font-size: 21px;
+        }
+
+        .card h3 {
+            margin-bottom: 10px;
+            font-size: 17px;
+        }
+
+        .card p {
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        /* Footer */
+
+        footer {
+            padding: 25px 0;
+            border-top: 1px solid var(--border);
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .footer-content {
+            display: flex;
+            justify-content: space-between;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        footer span {
+            color: #b7c4d8;
+        }
+
+        @media (max-width: 700px) {
+            .hero {
+                padding: 75px 0 60px;
+            }
+
+            .nav-links {
+                gap: 15px;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            h1 {
+                letter-spacing: -2px;
+            }
+
+            .terminal-body {
+                padding: 18px;
+                font-size: 11px;
+            }
+
+            .features {
+                padding-top: 45px;
+            }
+        }
+
+        @media (max-width: 420px) {
+            .nav-links {
+                display: none;
+            }
+        }
+    </style>
 </head>
+
 <body>
-    <h1>Hello  chles , Webserv!</h1>
+
+    <header>
+        <div class="container">
+            <nav>
+                <a href="/" class="logo">
+                    <div class="logo-icon">&lt;/&gt;</div>
+                    Webserv
+                </a>
+
+                <div class="nav-links">
+                    <a href="#features">Features</a>
+                    <a href="#server">Server</a>
+                    <a href="#about">About</a>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="container">
+
+                <div class="badge">
+                    <span class="dot"></span>
+                    42 School Project
+                </div>
+
+                <h1>
+                    Our own<br>
+                    <span>HTTP server.</span>
+                </h1>
+
+                <p>
+                    Built from scratch in C++98.
+                    A lightweight HTTP server designed to handle
+                    requests, serve files and bring the web to life.
+                </p>
+
+                <div class="buttons">
+                    <a href="#server" class="button button-primary">
+                        Explore the server →
+                    </a>
+
+                    <a href="#features" class="button button-secondary">
+                        Discover features
+                    </a>
+                </div>
+
+            </div>
+        </section>
+
+        <section class="container" id="server">
+            <div class="terminal">
+
+                <div class="terminal-header">
+                    <span class="circle red"></span>
+                    <span class="circle yellow"></span>
+                    <span class="circle green"></span>
+                    <span class="terminal-title">webserv — terminal</span>
+                </div>
+
+                <div class="terminal-body">
+                    <div class="terminal-line">
+                        <span class="prompt">$</span>
+                        <span class="command"> ./webserv config.conf</span>
+                    </div>
+
+                    <div class="terminal-line comment">
+                        # Starting Webserv...
+                    </div>
+
+                    <div class="terminal-line">
+                        <span class="success">[OK]</span>
+                        Configuration loaded successfully
+                    </div>
+
+                    <div class="terminal-line">
+                        <span class="success">[OK]</span>
+                        Listening on 127.0.0.1:8080
+                    </div>
+
+                    <div class="terminal-line">
+                        <span class="success">[OK]</span>
+                        Event loop initialized
+                    </div>
+
+                    <div class="terminal-line comment">
+                        # Ready to handle HTTP requests
+                    </div>
+
+                    <div class="terminal-line">
+                        <span class="prompt">webserv@localhost:~$</span>
+                        <span class="command"> _</span>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <section class="features" id="features">
+            <div class="container">
+
+                <div class="section-heading">
+                    <h2>Built for the web.</h2>
+                    <p>Everything starts with a request.</p>
+                </div>
+
+                <div class="grid">
+
+                    <article class="card">
+                        <div class="card-icon">↔</div>
+                        <h3>HTTP Protocol</h3>
+                        <p>
+                            Handle HTTP requests and responses.
+                            Understand methods, headers, status codes
+                            and the structure of the web.
+                        </p>
+                    </article>
+
+                    <article class="card">
+                        <div class="card-icon">⚡</div>
+                        <h3>Non-blocking I/O</h3>
+                        <p>
+                            Use poll() to monitor multiple
+                            connections through a single event loop
+                            without blocking the server.
+                        </p>
+                    </article>
+
+                    <article class="card">
+                        <div class="card-icon">⌘</div>
+                        <h3>File Handling</h3>
+                        <p>
+                            Serve static websites, handle uploads
+                            and process different HTTP methods
+                            through configurable locations.
+                        </p>
+                    </article>
+
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer id="about">
+        <div class="container">
+            <div class="footer-content">
+                <span>Webserv — Made with C++98</span>
+                <span>42 School · HTTP Server Project</span>
+            </div>
+        </div>
+    </footer>
+
 </body>
 </html>
